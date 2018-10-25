@@ -35,11 +35,11 @@ Run via:
 In ghci: 
 
 ``` haskell
-    -- reload source file
-    :l Husky
+-- reload source file
+:l Husky
 
-    -- run main function
-    main
+-- run main function
+main
 ```
 
 
