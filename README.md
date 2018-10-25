@@ -2,7 +2,7 @@
 
 A simplistic music visualizer.
 
-See it in [action](https://asciinema.org/a/ZBjJfRlbMM5IJDeFOzWNk1Fje).
+See it in [action](https://asciinema.org/a/MVyWUj6b4sTrE2WhrMhexFPNX).
 
 
 ## Dependencies
