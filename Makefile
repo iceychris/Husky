@@ -14,3 +14,6 @@ shell: regen
 
 run:
 	./result/bin/$(PROJECT)
+
+clean:
+	rm -f default.nix shell.nix result 
