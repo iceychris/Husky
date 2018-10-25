@@ -1,0 +1,5 @@
+*.nix
+!release.nix
+
+# nix-build output directory
+result

@@ -1,0 +1,13 @@
+name: husky
+version: 0.0.1
+license: MIT
+cabal-version: >= 1.18
+build-type: Simple
+
+executable husky
+    build-depends: base < 5, pulse-simple, bytestring, vector
+    main-is: Husky.hs
+    default-language: Haskell2010
+    ghc-options: 
+        -O2
+        -j4
