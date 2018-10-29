@@ -9,6 +9,8 @@ import Data.ByteString.Internal as BS
 import qualified Data.Vector.Storable as V
 
 import Sound.Pulse.Simple
+import Numeric.FFT.Vector.Plan
+import Numeric.FFT.Vector.Unitary
 
 
 -- TODO
@@ -24,6 +26,8 @@ bytesToFloats = V.unsafeCast . aux . BS.toForeignPtr
 
 samplerate = 44100
 bufferchunk = 4096 -- 1024
+--transform = Transform 
+
 
 readSample :: Simple -> IO ByteString 
 readSample s = simpleReadRaw s bufferchunk :: IO ByteString 
@@ -44,13 +48,17 @@ putStrLnFloat bytes = do
 volMaxChars = 40
 volume :: ByteString -> IO ()
 volume bs = do
-    sequence $ map (\x -> putStr "█") $ replicate n 0 
+    putStr $ replicate n '█'
     putStrLn "▓▒░"
     where
         floatmax = V.maximum $ vecAbs $ bytesToFloats bs
         n = round $ floatmax * volMaxChars
 
-
+-- fft :: Transform a b -> ByteString -> IO ()
+-- fft = putStrLn "dummy"
+-- 
+-- getPlan :: Simple -> Maybe Transform a b 
+-- getPlan = Nothing 
 
 
 -- loop forever reading audio :)
@@ -64,6 +72,8 @@ capture s prevVol = do
 main = do
     s <- simpleNew Nothing title Record Nothing description 
       (SampleSpec (F32 LittleEndian) samplerate 1) Nothing bufattr
+    -- plan <- planOfType Measure 
+    --plan <- getPlan s 
     capture s 1.0
     simpleFree s
     where
