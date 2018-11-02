@@ -29,19 +29,26 @@ import Graphics.Vty.Output
 
 -- TODO
 -- - add signal handler to call simpleFree at some point... 
+-- - make terminating via Ctrl-C possible
+-- - remove charsFade when input value < 3
 
 
 -- constants
 samplerate = 44100
-bufferchunk = 4096 -- 1024
+bufferchunk = 1024 -- 1024
 fftinput = (fst (bufferchunk `divMod` 4)) :: Int
 transform = I.dftR2C
 myplan = plan transform fftinput 
 
-volMaxChars = 0.1
+volMaxChars = 0.07
 ab = 0.1
-barWidth = 1 -- for now only 1 works?
-binsToTake = 5
+barWidth = 2 -- for now only 1 works?
+binsToTake = 64
+-- charsFill = '#' -- '█'
+charsFill = '█'
+-- charsFade = "|*." --"▓▒░"
+charsFade = "▓▒░"
+
 
 -- old
 maxfft = 40
@@ -88,8 +95,12 @@ maxBarLen = 30
 bar :: Int -> String
 bar n = a ++ b ++ replicate (maxBarLen-n) ' '
     where
-        a = replicate n '█'
-        b = "▓▒░"
+        a = replicate n charsFill
+        b = charsFade
+
+--
+strBar :: Int -> [String]
+strBar n = map (\c -> [c]) (bar n)
 
 -- value, maximum
 vbar :: Float -> Float -> IO ()
@@ -111,22 +122,11 @@ displayable val maxi = round $ (*) val $ maxi
 -- ███
 -- ███
 imbar :: Int -> Int -> Image
-imbar n width = vertCat $ replicate width $ string defAttr $ bar n 
-
-colorbox_16 :: Image
-colorbox_16 = border <|> column0 <|> border <|> column1 <|> border <|> column2 <|> border
+imbar n width = horizCat $ replicate width columns 
     where
-        column0 = vertCat $ map lineWithColor normal
-        column1 = vertCat $ map lineWithColor bright
-        border = vertCat $ replicate (length normal) $ string defAttr " | "
-        column2 = vertCat $ map (string defAttr . snd) normal
-        lineWithColor (c, cName) = string (defAttr `withForeColor` c) cName
-        normal = zip [ black, red, green, yellow, blue, magenta, cyan, white ]
-                     [ "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white" ]
-        bright = zip [ brightBlack, brightRed, brightGreen, brightYellow, brightBlue
-                     , brightMagenta, brightCyan, brightWhite ]
-                     [ "bright black", "bright red", "bright green", "bright yellow"
-                     , "bright blue", "bright magenta", "bright cyan", "bright white" ]
+        onebar = reverse (strBar n)
+        columns = vertCat (map (\x -> string defAttr x) onebar)
+
 
 
 fft :: V.Vector Double -> V.Vector Double
@@ -176,7 +176,7 @@ volumefft3 vec = do
     -- using <|>
     --  which is
     --   Image -> Image -> Image
-    (foldt (\a b -> a <|> b) (head images) (tail images)) <|> colorbox_16
+    (foldt (\a b -> a <|> b) (head images) (tail images))
     -- vertCat images
     where
         doubles = toDouble vec
