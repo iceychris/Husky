@@ -31,6 +31,7 @@ import Graphics.Vty.Output
 
 -- local libs
 import Util
+import Model
 
 
 -- TODO
@@ -43,30 +44,60 @@ import Util
     -- (3) get terminal size 
 
 
--- constants
-samplerate = 44100
-bufferchunk = 4096 -- 1024
-fftinput = (fst (bufferchunk `divMod` 4)) :: Int
-transform = I.dftR2C
-myplan = plan transform fftinput 
 
+qgracefulShutdown :: Husky -> IO ()
+qgracefulShutdown h = do
+    putStrLn "qgracefulShutdow not implemented"
+    --(vtyInstance h) >>= shutdown
+    --(recSimple h) >>= simpleFree
+
+
+
+-- move these
 volMaxChars = 0.3
-barWidth = 2 -- for now only 1 works?
+barWidth = 2
 binsToTake = 60
--- charsFill = '#' -- '█'
-charsFill = '█'
--- charsFade = "|*." --"▓▒░"
-charsFade = "▓▒░"
--- charsEmpty = '0'
-charsEmpty = ' '
 maxBarLen = 15 -- height
 
-title = "Husky"
-description = "Audio Visualizer"
-bufattr = Just $ BufferAttr Nothing Nothing Nothing Nothing $ Just samplerate 
+-- initial values
+defaultBufferchunk = 1024
+huskyDefault = Husky {
+    title = "Husky",
+    description = "Audio Visualizer",
 
--- old
-maxfft = 40
+    samplerate = 44100,
+    bufferchunk = defaultBufferchunk,
+
+    fftInput = (fst (defaultBufferchunk `divMod` 4)),
+    -- fftTransform = I.dftR2C,
+    -- fftPlan = plan transform fftInput,
+
+    windowX = 0,
+    windowY = 0,
+
+    charsEmpty  = ' ',
+    charsFilled = '█',
+    charsFade   = "▓▒░",
+
+    recBufattr  = Just $ BufferAttr Nothing Nothing Nothing Nothing $ Just $ samplerate huskyDefault,
+    audioVolume = 0,
+    audioSample = V.fromList $ replicate defaultBufferchunk 0.0,
+    audioFFT    = Just $ V.fromList $ replicate defaultBufferchunk 0.0,
+    audioFFTSq  = V.fromList $ replicate defaultBufferchunk 0.0
+}
+
+
+info = Visualizer {
+    name = "Info Visualizer",
+    bounds_x = 40,
+    bounds_y = 10
+}
+
+visInfo :: Husky -> Visualizer -> Image
+visInfo h v = string defAttr $ name v
+
+
+
 
 
 
@@ -78,8 +109,8 @@ bytesToFloats = V.unsafeCast . aux . BS.toForeignPtr
 toDouble :: V.Vector Float -> V.Vector Double
 toDouble vec = V.map (\x -> float2Double x) vec
 
-readSample :: Simple -> IO ByteString 
-readSample s = simpleReadRaw s bufferchunk :: IO ByteString 
+readSample :: Int -> Simple -> IO ByteString 
+readSample ssize s = simpleReadRaw s ssize :: IO ByteString 
 
 vecAbs :: V.Vector Float -> V.Vector Float
 vecAbs vec = V.map (\v -> abs v) vec 
@@ -93,24 +124,31 @@ putStrLnFloat :: ByteString -> IO ()
 putStrLnFloat bytes = do
     System.IO.putStrLn $ show $ V.maximum $ vecAbs $ bytesToFloats bytes
 
--- 
-bar :: Int -> String
-bar n | n < 3  = chF ++ (replicate (maxBarLen-n) charsEmpty)
-      | n >= 3 && n <= maxBarLen = filled ++ charsFade ++ replicate (maxBarLen-n) charsEmpty 
-      | n > maxBarLen = replicate maxBarLen charsFill
+-- todo make a record for this...
+-- (charsEmpty, charsFilled, charsFade) maxBarLen barLen
+bar :: (Char, Char) -> String -> Int -> Int -> String
+bar chs chFa mbarlen n | n < 3  = chFa ++ (replicate (mbarlen-n) $ fst chs)
+      | n >= 3 && n <= mbarlen = filled ++ chFa ++ (replicate (maxBarLen-n) $ fst chs)
+      | n > mbarlen = replicate maxBarLen $ snd chs
     where
-        chF = reverse $ take n $ reverse charsFade
-        filled = replicate (n-3) charsFill
+        chF = reverse $ take n $ reverse chFa
+        filled = replicate (n-3) $ snd chs
 
 
 
 --
+a = ' '
+b = '#'
+c = "|+-"
+d = maxBarLen
+barApplied = bar (a, b) c d 
+
 strBar :: Int -> [String]
-strBar n = map (\c -> [c]) (bar n)
+strBar n = map (\c -> [c]) (barApplied n)
 
 -- value, maximum
 vbar :: Float -> Float -> IO ()
-vbar val maxi = putStrLn $ bar $ displayable val maxi
+vbar val maxi = putStrLn $ barApplied $ displayable val maxi
 
 
 
@@ -130,16 +168,20 @@ imbar n width = horizCat $ replicate width columns
 
 
 
-fft :: V.Vector Double -> V.Vector Double
-fft floats = V.map magnitude resfft
+-- generic function applying the fft?
+fft :: Plan Double (Complex Double) -> V.Vector Double -> V.Vector Double
+fft plan floats = V.map magnitude resfft
     where 
-        resfft = execute myplan floats
+        resfft = execute plan floats
+
 
 volume :: ByteString -> IO ()
 volume bs = vbar fmax volMaxChars 
     where
         fmax = V.maximum $ vecAbs $ bytesToFloats bs
 
+-- old
+maxfft = 40
 volumefft :: ByteString -> IO ()
 volumefft bs = vbar headFloats maxfft
     where
@@ -157,7 +199,7 @@ volumefft2 val = do
         rowN = "X" ++ replicate (fromEnum w - 2) ' ' ++ "X\n"
         image = row0 ++ 
             (concat $ replicate (fromEnum (fst (h `divMod` 2)) - 2) rowN) ++ 
-            (bar val) ++ "\n" ++
+            (barApplied val) ++ "\n" ++
             (concat $ replicate (fromEnum (fst (h `divMod` 2)) - 2) rowN) ++ 
             rowH
     putStr image
@@ -173,16 +215,16 @@ valToImage val = imbar (displayable (double2Float val) volMaxChars) barWidth
 mline :: Int -> Char -> Image
 mline wdh c = string defAttr (replicate wdh c)
 
-volumefft3 :: V.Vector Float -> Image 
-volumefft3 vec = do
-    foldt (\a b -> a <|> b) (head images) (tail images)
-    where
-        wdh = binsToTake * barWidth
-        doubles = toDouble vec
-        ffts = fft doubles
-        slice = V.take binsToTake ffts
-        lslice = V.toList slice
-        images = map (\val -> valToImage val) lslice
+-- volumefft3 :: V.Vector Float -> Image 
+-- volumefft3 vec = do
+--     foldt (\a b -> a <|> b) (head images) (tail images)
+--     where
+--         wdh = binsToTake * barWidth
+--         doubles = toDouble vec
+--         ffts = fft doubles
+--         slice = V.take binsToTake ffts
+--         lslice = V.toList slice
+--         images = map (\val -> valToImage val) lslice
 
 
 centerRect :: (Int, Int) -> Image -> Image
@@ -192,15 +234,23 @@ centerRect (w, h) img = translate tx ty img
         ty = fst $ (h - maxBarLen) `divMod` 2
 
 
-animate :: Vty -> ByteString -> IO ()
-animate vty bs = do
-    region <- displayBounds $ outputIface vty
-    update vty $ picForImage (centerRect region (vertJoin fftoutput qline))
+-- animate :: Vty -> ByteString -> IO ()
+-- animate vty bs = do
+--     region <- displayBounds $ outputIface vty
+--     update vty $ picForImage (centerRect region (vertJoin fftoutput qline))
+--     where
+--         floats = bytesToFloats bs
+--         fftoutput = volumefft3 floats
+--         c = (binsToTake*barWidth)
+--         qline = mline c '#'
+
+animate2 :: Husky -> IO ()
+animate2 h = do
+    region <- displayBounds $ outputIface $ vtyInstance h
+    update vty $ picForImage img 
     where
-        floats = bytesToFloats bs
-        fftoutput = volumefft3 floats
-        c = (binsToTake*barWidth)
-        qline = mline c charsFill
+        img = visInfo h info
+        vty = vtyInstance h
 
 
 
@@ -209,22 +259,22 @@ handleIOEvent x = do
     return () 
 
 -- loop forever reading audio :)
-capture :: MVar Event -> Vty -> Simple -> Float -> IO ()
-capture ioBox vty s prevVol = do
-    -- (3) get terminal size 
-    -- (2) check for MVar 
-    -- ev :: Maybe (IO Event)
-    ev <- tryTakeMVar ioBox
-    case ev of 
-        Nothing -> do
-            -- handleIOEvent x
-            (readSample s) >>= (animate vty)
-            capture ioBox vty s prevVol
-        Just x -> do
-            -- free and return
-            if shouldAbort x 
-                then gracefulShutdown vty s
-                else capture ioBox vty s prevVol
+-- capture :: MVar Event -> Vty -> Simple -> Float -> IO ()
+-- capture ioBox vty s prevVol = do
+--     -- (3) get terminal size 
+--     -- (2) check for MVar 
+--     -- ev :: Maybe (IO Event)
+--     ev <- tryTakeMVar ioBox
+--     case ev of 
+--         Nothing -> do
+--             -- handleIOEvent x
+--             (readSample defaultBufferchunk s) >>= (animate vty)
+--             capture ioBox vty s prevVol
+--         Just x -> do
+--             -- free and return
+--             if shouldAbort x 
+--                 then gracefulShutdown vty s
+--                 else capture ioBox vty s prevVol
 
 gracefulShutdown :: Vty -> Simple -> IO ()
 gracefulShutdown vty s = do
@@ -239,37 +289,74 @@ shouldAbort ev = case ev of
     _ -> False
 
 
-watchForIOEvents :: MVar Event -> Vty -> IO ()
-watchForIOEvents ioBox vty = do
+watchForIOEvents :: Husky -> IO ()
+watchForIOEvents h = do
     ev <- nextEvent vty
     putStrLn $ show ev
 
     -- sent over to other thread
-    putMVar ioBox $ ev 
+    putMVar qiobox $ ev 
 
     -- pattern match for Ctrl-C 
     if shouldAbort ev
         then exitWith ExitSuccess
-        else watchForIOEvents ioBox vty
+        else watchForIOEvents h 
+    where
+        qiobox = ioBox h
+        vty = vtyInstance h
+
+
+spin :: Husky -> IO ()
+spin h = do
+    ev <- tryTakeMVar $ ioBox h
+    case ev of 
+        Nothing -> do
+            -- handleIOEvent x
+            -- (readSample defaultBufferchunk (simple h)) >>= (animate2 h)
+            animate2 h
+            -- recursion
+            spin h 
+        Just x -> do
+            -- free and return
+            if shouldAbort x 
+                then gracefulShutdown vty s 
+                -- recursion
+                else spin h 
+    where
+        vty = (vtyInstance h)
+        s = (recSimple h)
 
 
 
 main = do
 
     -- communication between UI and recorder thread
-    ioBox <- newEmptyMVar
+    qiobox <- newEmptyMVar
 
     -- simple pulse object
-    s <- simpleNew Nothing title Record Nothing description 
-      (SampleSpec (F32 LittleEndian) samplerate 1) Nothing bufattr
+    let tit = title huskyDefault
+    let desc = description huskyDefault
+    let sr = samplerate huskyDefault
+    let ba = recBufattr huskyDefault
+    s <- simpleNew Nothing tit Record Nothing desc 
+      (SampleSpec (F32 LittleEndian) sr 1) Nothing ba
 
     -- create vty
     vty <- mkVty defaultConfig
 
+    -- update Husky initial object
+    let updateSimple x = x { recSimple = s }
+    let updateVty x = x { vtyInstance = vty }
+    let updateIoBox x = x { ioBox = qiobox }
+    let newHusky = (updateIoBox . updateVty . updateSimple) huskyDefault
+
+    -- spin
+    forkIO $ spin $ newHusky
+
     -- (1) start vty watcher thread
-    forkIO $ capture ioBox vty s 1.0
+    -- forkIO $ capture ioBox vty s 1.0
 
     -- watch for IO Events
-    watchForIOEvents ioBox vty
+    watchForIOEvents newHusky 
 
 
