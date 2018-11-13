@@ -29,9 +29,10 @@ import Graphics.Vty.Inline
 import Graphics.Vty.Picture
 import Graphics.Vty.Output
 
--- local libs
+-- local
 import Util
 import Model
+import Visualizers
 
 
 -- TODO
@@ -61,42 +62,59 @@ maxBarLen = 15 -- height
 
 -- initial values
 defaultBufferchunk = 1024
+defaultAudio = Audio {
+    audioVolume = 0,
+    audioSample = V.fromList $ replicate defaultBufferchunk 0.0,
+    audioFFT    = V.fromList $ replicate defaultBufferchunk 0.0,
+    audioFFTSq  = V.fromList $ replicate defaultBufferchunk 0.0
+}
 huskyDefault = Husky {
-    title = "Husky",
+    title       = "Husky",
     description = "Audio Visualizer",
 
-    samplerate = 44100,
-    bufferchunk = defaultBufferchunk,
+    samplerate       = 44100,
+    bufferchunk      = defaultBufferchunk,
 
-    fftInput = (fst (defaultBufferchunk `divMod` 4)),
+    fftInput         = (fst (defaultBufferchunk `divMod` 4)),
     -- fftTransform = I.dftR2C,
     -- fftPlan = plan transform fftInput,
 
-    windowX = 0,
-    windowY = 0,
+    window_width     = 0,
+    window_height    = 0,
 
-    charsEmpty  = ' ',
-    charsFilled = '█',
-    charsFade   = "▓▒░",
+    charsEmpty       = ' ',
+    charsFilled      = '█',
+    charsFade        = "▓▒░",
 
-    recBufattr  = Just $ BufferAttr Nothing Nothing Nothing Nothing $ Just $ samplerate huskyDefault,
-    audioVolume = 0,
-    audioSample = V.fromList $ replicate defaultBufferchunk 0.0,
-    audioFFT    = Just $ V.fromList $ replicate defaultBufferchunk 0.0,
-    audioFFTSq  = V.fromList $ replicate defaultBufferchunk 0.0
+    recBufattr       = Just $ BufferAttr Nothing Nothing Nothing Nothing $ Just $ samplerate huskyDefault,
+
+    audio            = defaultAudio
 }
 
-
-info = Visualizer {
-    name = "Info Visualizer",
-    bounds_x = 40,
-    bounds_y = 10
+vInfo = Visualizer {
+    name = "info"
 }
+vPower = Visualizer {
+    name = "power"
+}
+vFFT = Visualizer {
+    name = "fft"
+}
+layout = Node (Verti, 0.5)
+        (Leaf vInfo) (Node (Horiz, 0.5) (Leaf vPower) (Leaf vFFT))
+layoutZ = (layout,[])
 
-visInfo :: Husky -> Visualizer -> Image
-visInfo h v = string defAttr $ name v
-
-
+-- (w,h) -> ...
+-- critical issue: we need to iterate breadth first!
+-- because we first need to fill w and h of the root node
+-- also, we have to extend window to have w and h...
+-- options
+-- 1. rewrite traverseParent to breadth first
+-- 2. rewrite traverseParent to use Zipper instead of Tree (path to root tree would suffice)
+-- 3. alter the function to take in a list of windows.
+--    then always get some way to turn a zipper into a list of passed inner nodes
+fillVisDims :: (Int, Int) -> Tree Visualizer Window -> Tree Visualizer Window -> Tree Visualizer Window
+fillVisDims (w,h) (Node x _ _) (Leaf y) = Leaf y
 
 
 
@@ -244,12 +262,12 @@ centerRect (w, h) img = translate tx ty img
 --         c = (binsToTake*barWidth)
 --         qline = mline c '#'
 
-animate2 :: Husky -> IO ()
-animate2 h = do
+displayAll :: Husky -> IO ()
+displayAll h = do
     region <- displayBounds $ outputIface $ vtyInstance h
     update vty $ picForImage img 
     where
-        img = visInfo h info
+        img = visBox h info
         vty = vtyInstance h
 
 
@@ -282,6 +300,7 @@ gracefulShutdown vty s = do
     simpleFree s
 
 
+-- pattern match for Ctrl-C or q
 shouldAbort :: Event -> Bool
 shouldAbort ev = case ev of 
     (EvKey (KChar 'c') [MCtrl]) -> True
@@ -294,10 +313,9 @@ watchForIOEvents h = do
     ev <- nextEvent vty
     putStrLn $ show ev
 
-    -- sent over to other thread
+    -- send over to other thread
     putMVar qiobox $ ev 
 
-    -- pattern match for Ctrl-C 
     if shouldAbort ev
         then exitWith ExitSuccess
         else watchForIOEvents h 
@@ -313,7 +331,7 @@ spin h = do
         Nothing -> do
             -- handleIOEvent x
             -- (readSample defaultBufferchunk (simple h)) >>= (animate2 h)
-            animate2 h
+            displayAll h
             -- recursion
             spin h 
         Just x -> do
