@@ -61,7 +61,10 @@ binsToTake = 60
 maxBarLen = 15 -- height
 
 -- initial values
-defaultBufferchunk = 1024
+defaultBufferchunk = 4096 -- 1024
+fftInputs = (fst (defaultBufferchunk `divMod` 4))
+fftTransform = I.dftR2C
+fftPlan = plan fftTransform fftInputs
 defaultAudio = Audio {
     audioVolume = 0,
     audioSample = V.fromList $ replicate defaultBufferchunk 0.0,
@@ -75,9 +78,7 @@ huskyDefault = Husky {
     samplerate       = 44100,
     bufferchunk      = defaultBufferchunk,
 
-    fftInput         = (fst (defaultBufferchunk `divMod` 4)),
-    -- fftTransform = I.dftR2C,
-    -- fftPlan = plan transform fftInput,
+    fftInput         = fftInputs,
 
     window_width     = 0,
     window_height    = 0,
@@ -116,6 +117,12 @@ layoutZ = (layout,[])
 fillVisDims :: (Int, Int) -> Tree Visualizer Window -> Tree Visualizer Window -> Tree Visualizer Window
 fillVisDims (w,h) (Node x _ _) (Leaf y) = Leaf y
 
+fillVisDims2 :: (Int, Int) -> Zipper Visualizer Window -> Tree Visualizer Window
+fillVisDims2 (w,h) (Leaf y, bs) = Leaf (updateVis y) 
+    where
+        ws = parents (Leaf y, bs)
+        ps = unwords $ map (\w -> (show $ fst w)) ws
+        updateVis x = x { name = ps }
 
 
 
@@ -145,7 +152,7 @@ putStrLnFloat bytes = do
 -- todo make a record for this...
 -- (charsEmpty, charsFilled, charsFade) maxBarLen barLen
 bar :: (Char, Char) -> String -> Int -> Int -> String
-bar chs chFa mbarlen n | n < 3  = chFa ++ (replicate (mbarlen-n) $ fst chs)
+bar chs chFa mbarlen n | n < 3  = (take n chFa) ++ (replicate (mbarlen-n) $ fst chs)
       | n >= 3 && n <= mbarlen = filled ++ chFa ++ (replicate (maxBarLen-n) $ fst chs)
       | n > mbarlen = replicate maxBarLen $ snd chs
     where
@@ -185,12 +192,26 @@ imbar n width = horizCat $ replicate width columns
         columns = vertCat (map (\x -> string defAttr x) onebar)
 
 
-
 -- generic function applying the fft?
-fft :: Plan Double (Complex Double) -> V.Vector Double -> V.Vector Double
-fft plan floats = V.map magnitude resfft
-    where 
-        resfft = execute plan floats
+fft :: Plan Double (Complex Double) -> V.Vector Double -> V.Vector (Complex Double)
+fft plan floats = execute plan floats
+
+sq :: V.Vector (Complex Double) -> V.Vector Double
+sq v = V.map magnitude v
+
+fftAudio :: Husky -> ByteString -> Audio 
+fftAudio h bs = aud
+    where
+        sample = toDouble $ bytesToFloats bs
+        fftsample = fft fftPlan sample
+        fftsqsample = sq fftsample
+        aud = Audio {
+            audioSample = sample,
+            audioVolume = 0, -- todo fix this
+            audioFFT = fftsample,
+            audioFFTSq = fftsqsample
+        }
+
 
 
 volume :: ByteString -> IO ()
@@ -233,16 +254,17 @@ valToImage val = imbar (displayable (double2Float val) volMaxChars) barWidth
 mline :: Int -> Char -> Image
 mline wdh c = string defAttr (replicate wdh c)
 
--- volumefft3 :: V.Vector Float -> Image 
--- volumefft3 vec = do
---     foldt (\a b -> a <|> b) (head images) (tail images)
---     where
---         wdh = binsToTake * barWidth
---         doubles = toDouble vec
---         ffts = fft doubles
---         slice = V.take binsToTake ffts
---         lslice = V.toList slice
---         images = map (\val -> valToImage val) lslice
+
+-- takes in the squared fft values 
+displayFFT :: Husky -> V.Vector Double -> Image 
+displayFFT h vec = do
+    foldt (\a b -> a <|> b) (head images) (tail images)
+    where
+        bins = binsToTake
+        wdh = bins * barWidth
+        slice = V.take bins vec
+        lslice = V.toList slice
+        images = map (\val -> valToImage val) lslice
 
 
 centerRect :: (Int, Int) -> Image -> Image
@@ -265,9 +287,14 @@ centerRect (w, h) img = translate tx ty img
 displayAll :: Husky -> IO ()
 displayAll h = do
     region <- displayBounds $ outputIface $ vtyInstance h
-    update vty $ picForImage img 
+    update vty $ picForImage cropped 
     where
-        img = visBox h info
+        -- img = visBox h info
+        ffts = audioFFTSq (audio h)
+        img = displayFFT h ffts
+        wi = window_width h
+        he = window_height h
+        cropped = crop wi he img
         vty = vtyInstance h
 
 
@@ -330,19 +357,35 @@ spin h = do
     case ev of 
         Nothing -> do
             -- handleIOEvent x
-            -- (readSample defaultBufferchunk (simple h)) >>= (animate2 h)
-            displayAll h
-            -- recursion
-            spin h 
+
+            -- vty bounds
+            region <- displayBounds $ outputIface vty
+
+            -- audio
+            sample <- readSample defaultBufferchunk s
+            let nAudio = fftAudio h sample
+
+            -- update Husky object
+            let hnew = ((updateAudio nAudio) . (updateVty region)) h 
+
+            -- show
+            displayAll hnew
+
+            -- recurse
+            spin hnew 
+
         Just x -> do
             -- free and return
             if shouldAbort x 
                 then gracefulShutdown vty s 
-                -- recursion
+
+                -- recurse
                 else spin h 
     where
         vty = (vtyInstance h)
         s = (recSimple h)
+        updateAudio x y = y { audio = x }
+        updateVty x y = y { window_width = fst x, window_height = snd x}
 
 
 
