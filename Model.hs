@@ -131,6 +131,18 @@ traverseParent (Node x l r, bs) fun =
 traverseParent (Node x Empty Empty, bs) fun = (Node x Empty Empty, bs)
 
 
+parents :: Zipper a b -> [b]
+parents (_, []) = []
+parents (_, [LeftCrumb x t]) = [x]
+parents (_, [RightCrumb x t]) = [x]
+parents (t, (LeftCrumb x t2):cs)  = [x] ++ parents (t, cs) 
+parents (t, (RightCrumb x t2):cs) = [x] ++ parents (t, cs) 
+
+parentsMaybe :: Maybe (Zipper a b) -> [b]
+parentsMaybe Nothing = []
+parentsMaybe (Just z) = parents z 
+
+
 -- parent -> child -> child
 exf :: Tree [[Char]] [Char] -> Tree [[Char]] [Char] -> Tree [[Char]] [Char]
 exf Empty _ = Empty
