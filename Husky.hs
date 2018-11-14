@@ -43,6 +43,8 @@ import Visualizers
 -- remove charsFade when input value < 3
 -- fix output dimensions
     -- (3) get terminal size 
+-- save the last fft (list?) and average with the current one to show image
+-- figure out tree stuff...
 
 
 
@@ -55,13 +57,13 @@ qgracefulShutdown h = do
 
 
 -- move these
-volMaxChars = 0.3
-barWidth = 2
-binsToTake = 60
-maxBarLen = 15 -- height
+volMaxChars = 0.9 -- scaling
+barWidth = 1
+binsToTake = 128
+maxBarLen = 20 -- height
 
 -- initial values
-defaultBufferchunk = 4096 -- 1024
+defaultBufferchunk = 2048 -- 1024
 fftInputs = (fst (defaultBufferchunk `divMod` 4))
 fftTransform = I.dftR2C
 fftPlan = plan fftTransform fftInputs
@@ -163,8 +165,8 @@ bar chs chFa mbarlen n | n < 3  = (take n chFa) ++ (replicate (mbarlen-n) $ fst 
 
 --
 a = ' '
-b = '#'
-c = "|+-"
+b = '█'
+c = "▓▒░"
 d = maxBarLen
 barApplied = bar (a, b) c d 
 
@@ -199,17 +201,24 @@ fft plan floats = execute plan floats
 sq :: V.Vector (Complex Double) -> V.Vector Double
 sq v = V.map magnitude v
 
+addy :: V.Vector (Complex Double) -> V.Vector Double
+addy v = V.map (\c -> realPart c + imagPart c) v
+
+
+
 fftAudio :: Husky -> ByteString -> Audio 
 fftAudio h bs = aud
     where
         sample = toDouble $ bytesToFloats bs
         fftsample = fft fftPlan sample
         fftsqsample = sq fftsample
+        fftaddsample = addy fftsample
         aud = Audio {
             audioSample = sample,
             audioVolume = 0, -- todo fix this
             audioFFT = fftsample,
-            audioFFTSq = fftsqsample
+            audioFFTSq = fftsqsample,
+            audioFFTAdd = fftaddsample
         }
 
 
@@ -254,6 +263,25 @@ valToImage val = imbar (displayable (double2Float val) volMaxChars) barWidth
 mline :: Int -> Char -> Image
 mline wdh c = string defAttr (replicate wdh c)
 
+-- perform (fake) downsampling to
+-- reduce the length to nL
+downsample :: Int -> V.Vector Double -> V.Vector Double
+downsample nL vec = vecsSums 
+    where 
+        vecLength = V.length vec
+        calc = (vecLength `div` nL)
+        oneBin = floor (fromIntegral calc)
+        vecs = decimate oneBin vec 
+        vecsSums = V.fromList (map (\x -> V.maximum x) vecs)
+
+decimate :: Int -> V.Vector Double -> [V.Vector Double]
+decimate binL vec = case l of
+    0 -> []
+    _ -> [front] ++ (decimate binL back)
+    where 
+        l = V.length vec
+        front = (V.take binL vec)
+        back = (V.drop binL vec)
 
 -- takes in the squared fft values 
 displayFFT :: Husky -> V.Vector Double -> Image 
@@ -262,7 +290,9 @@ displayFFT h vec = do
     where
         bins = binsToTake
         wdh = bins * barWidth
-        slice = V.take bins vec
+        l = fromIntegral (V.length vec) :: Double
+        interested = V.take (floor (l * 0.7)) vec
+        slice = downsample bins interested
         lslice = V.toList slice
         images = map (\val -> valToImage val) lslice
 
@@ -286,7 +316,6 @@ centerRect (w, h) img = translate tx ty img
 
 displayAll :: Husky -> IO ()
 displayAll h = do
-    region <- displayBounds $ outputIface $ vtyInstance h
     update vty $ picForImage cropped 
     where
         -- img = visBox h info

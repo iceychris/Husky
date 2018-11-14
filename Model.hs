@@ -53,7 +53,8 @@ data Audio = Audio {
     audioSample :: V.Vector Double,
     audioVolume :: Int,
     audioFFT :: V.Vector (Complex Double),
-    audioFFTSq :: V.Vector Double
+    audioFFTSq :: V.Vector Double,
+    audioFFTAdd :: V.Vector Double
 }
 
 -- is this modeled adequately?
