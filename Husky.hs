@@ -45,6 +45,8 @@ import Visualizers
     -- (3) get terminal size 
 -- save the last fft (list?) and average with the current one to show image
 -- figure out tree stuff...
+-- criterion measuring
+-- or profiling
 
 
 
@@ -62,16 +64,22 @@ barWidth = 1
 binsToTake = 128
 maxBarLen = 20 -- height
 
+-- fft options
+historySize = 3
+waCoefs = [0.7, 0.2, 0.1]
+
 -- initial values
 defaultBufferchunk = 2048 -- 1024
 fftInputs = (fst (defaultBufferchunk `divMod` 4))
 fftTransform = I.dftR2C
 fftPlan = plan fftTransform fftInputs
+demoVec = V.fromList $ replicate defaultBufferchunk 0.0
+
 defaultAudio = Audio {
     audioVolume = 0,
-    audioSample = V.fromList $ replicate defaultBufferchunk 0.0,
     audioFFT    = V.fromList $ replicate defaultBufferchunk 0.0,
-    audioFFTSq  = V.fromList $ replicate defaultBufferchunk 0.0
+    audioSample = demoVec,
+    audioFFTSqHistory = replicate historySize demoVec
 }
 huskyDefault = Husky {
     title       = "Husky",
@@ -206,6 +214,8 @@ addy v = V.map (\c -> realPart c + imagPart c) v
 
 
 
+-- TODO: fix audio
+-- TODO: fix addy vs sq
 fftAudio :: Husky -> ByteString -> Audio 
 fftAudio h bs = aud
     where
@@ -213,12 +223,14 @@ fftAudio h bs = aud
         fftsample = fft fftPlan sample
         fftsqsample = sq fftsample
         fftaddsample = addy fftsample
+        prevAud = audio h
+        prevHist = audioFFTSqHistory prevAud
         aud = Audio {
             audioSample = sample,
             audioVolume = 0, -- todo fix this
             audioFFT = fftsample,
-            audioFFTSq = fftsqsample,
-            audioFFTAdd = fftaddsample
+            audioFFTAdd = fftaddsample,
+            audioFFTSqHistory = [fftsqsample] ++ (init prevHist) 
         }
 
 
@@ -319,7 +331,7 @@ displayAll h = do
     update vty $ picForImage cropped 
     where
         -- img = visBox h info
-        ffts = audioFFTSq (audio h)
+        ffts = weightedAverageSq waCoefs (audio h)
         img = displayFFT h ffts
         wi = window_width h
         he = window_height h

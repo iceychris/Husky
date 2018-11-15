@@ -21,3 +21,7 @@ pairs f t        = t
 -- ?
 displayable :: Float -> Float -> Int
 displayable val maxi = round $ (*) val $ maxi
+
+-- (tolerance, a, b)
+roughlyEqual :: Real a => a -> a -> a -> Bool
+roughlyEqual tol a b = (abs (a-b)) < tol

@@ -18,8 +18,10 @@ import Numeric.FFT.Vector.Plan
 import Numeric.FFT.Vector.Unitary
 import qualified Numeric.FFT.Vector.Invertible as I
 
--- local
 import Graphics.Vty
+
+-- local
+import Util
 
 
 data Husky = Husky {
@@ -53,9 +55,40 @@ data Audio = Audio {
     audioSample :: V.Vector Double,
     audioVolume :: Int,
     audioFFT :: V.Vector (Complex Double),
-    audioFFTSq :: V.Vector Double,
+    audioFFTSqHistory :: [V.Vector Double],
     audioFFTAdd :: V.Vector Double
 }
+
+weightedAverageSq :: [Double] -> Audio -> V.Vector Double
+weightedAverageSq coef aud =
+    if not lengthesMatch then error "lengthes of coefficients and history do not match"
+    else if not coefAddUpToOne then error "coefficients do not add up to 1"
+    else ret 
+    where
+        hist = audioFFTSqHistory aud
+        lengthesMatch = length coef == length hist
+        coefAddUpToOne = roughlyEqual 0.01 (sum coef) 1.0
+
+        -- zip coef and history together
+        zipped = zip coef hist 
+
+        -- multiply coef with corresponding vector
+        multiplied = map (\x -> (V.map (\elem -> (fst x) * elem)) (snd x)) zipped
+        -- add these vectors up to one vector
+        accu = V.fromList (replicate (V.length $ head $ audioFFTSqHistory aud) 0.0) :: V.Vector Double
+        ret = foldt (\acc val -> addVecs acc val) accu multiplied 
+
+
+-- fix this shitty stuff...
+-- TODO implement addition here
+-- TODO VERY INEFFICIENT
+--  ~0.8sec for 4_000_000 long vecs
+addVecs :: V.Vector Double -> V.Vector Double -> V.Vector Double 
+addVecs a b = V.fromList $ zipWith (+) la lb
+    where
+        la = V.toList a
+        lb = V.toList b
+
 
 -- is this modeled adequately?
 -- try omitting Husky in the type list
