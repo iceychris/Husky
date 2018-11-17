@@ -149,78 +149,6 @@ goUpUnsafe (t, LeftCrumb x r:bs) = (Node x t r, bs)
 goUpUnsafe (t, RightCrumb x l:bs) = (Node x l t, bs)
 
 
--- ensure you pass bs=[] here (root of the tree)
--- function is
---   (parent, child) -> child
--- traverseParent :: Zipper a b -> (Tree a b -> Tree a b -> Tree a b) -> Zipper a b
--- 
--- -- make sure to go up the tree if not already
--- traverseParent (z, [x]) f = traverseParent (goUpUnsafe (z, [x])) f
--- traverseParent (z, bc:bcs) f  = traverseParent (goUpUnsafe (z, bc:bcs)) f
--- 
--- traverseParent (Empty, bs) fun = (Empty, bs)
--- traverseParent (Leaf a, bs) fun = (Leaf a, bs)
--- 
--- traverseParent (Node x (Leaf l) (Leaf r), bs) fun =
---     (Node x (fun (Node x Empty Empty) (Leaf l)) (fun (Node x Empty Empty) (Leaf r)), bs)
--- 
--- traverseParent (Node x (Leaf l) r, bs) fun =
---     (Node x (fun (Node x Empty Empty) (Leaf l)) (fst (traverseParent (r, bs) fun)), bs)
--- 
--- traverseParent (Node x l (Leaf r), bs) fun =
---     (Node x (fst (traverseParent (l, bs) fun)) (fun (Node x Empty Empty) (Leaf r)), bs)
--- 
--- traverseParent (Node x l r, bs) fun =
---     (Node x (fst (traverseParent (l, bs) fun)) (fst (traverseParent (r, bs) fun)), bs)
--- 
--- traverseParent (Node x Empty Empty, bs) fun = (Node x Empty Empty, bs)
-
-
-
--- inner zipper has Leaf node in focus
---
--- traverseParent2 :: Zipper a b -> (Zipper a b -> Tree a b) -> Zipper a b
--- 
--- -- make sure to go up the tree if not already
--- traverseParent2 (z, [x]) f = traverseParent2 (goUpUnsafe (z, [x])) f
--- traverseParent2 (z, bc:bcs) f  = traverseParent2 (goUpUnsafe (z, bc:bcs)) f
--- 
--- traverseParent2 (Node x (Leaf l) (Leaf r), bs) fun =
---     (Node x lapplied rapplied, bs)
---     where
---         t = Node x (Leaf l) (Leaf r)
---         lapplied = fun (goLeftUnsafe (t, bs))
---         rapplied = fun (goRightUnsafe (t, bs))
---         
--- traverseParent2 (Node x (Node y l1 r1) (Node z l2 r2), bs) fun =
---      
---     where
---         t = (Node x (Node y l1 r1) (Node y l1 r1)
---         tapplied = fun (t, bs)
---         la = goLeftUnsafe (tapplied, bs)
---         ra = goRightUnsafe (tapplied, bs)
-    
-
--- 
--- -- we do not want these cases
--- traverseParent2 (Empty, bs) fun = (Empty, bs)
--- traverseParent2 (Leaf a, bs) fun = (Leaf a, bs)
--- 
--- traverseParent2 (Node x (Leaf l) (Leaf r), bs) fun =
---     (Node x (fun (Node x Empty Empty) (Leaf l)) (fun (Node x Empty Empty) (Leaf r)), bs)
--- 
--- traverseParent2 (Node x (Leaf l) r, bs) fun =
---     (Node x (fun (Node x Empty Empty) (Leaf l)) (fst (traverseParent2 (r, bs) fun)), bs)
--- 
--- traverseParent2 (Node x l (Leaf r), bs) fun =
---     (Node x (fst (traverseParent2 (l, bs) fun)) (fun (Node x Empty Empty) (Leaf r)), bs)
--- 
--- traverseParent2 (Node x l r, bs) fun =
---     (Node x (fst (traverseParent2 (l, bs) fun)) (fst (traverseParent2 (r, bs) fun)), bs)
--- 
--- traverseParent2 (Node x Empty Empty, bs) fun = (Node x Empty Empty, bs)
-
-
 
 parents :: Zipper a b -> [b]
 parents (_, []) = []
@@ -233,65 +161,45 @@ parentsMaybe :: Maybe (Zipper a b) -> [b]
 parentsMaybe Nothing = []
 parentsMaybe (Just z) = parents z 
 
+traverseContextBF :: Zipper a b -> (Zipper a b -> Zipper a b) -> Zipper a b
+traverseContextBF (Leaf a, bs) f = f (Leaf a, bs)
+traverseContextBF (Node x l r, bs) f = rec zApplied 
+    where 
+        z = (Node x l r, bs)
+        zApplied = f z
+        rec (Leaf a, bsr) = error "rec (Leaf a,...) called. this should not happen. Audit your zip -> zip function"
+        rec (Node y ll rr, bsr) =
+            (Node y
+                (fst (traverseContextBF (goLeftUnsafe (mtree, bsr)) f))
+                (fst (traverseContextBF (goRightUnsafe (mtree, bsr)) f))
+            , bsr)
+            where
+                mtree = (Node y ll rr)
 
--- parent -> child -> child
-exf :: Tree [[Char]] [Char] -> Tree [[Char]] [Char] -> Tree [[Char]] [Char]
-exf (Leaf x) c = c
-exf (Node x _ _) (Leaf y) = Leaf [x ++ "_LUL"]
-exf _ child = child
-
-
-
--- traverseThis (Node x l r, bs) fun =
---     (Node x lt rt, bs) 
---     where
---         leftZipper  = (traverseThis (l,bs) fun)
---         rightZipper = (traverseThis (r,bs) fun)
---         lt = fst leftZipper
---         rt = fst rightZipper
-
-
--- treeDepth :: Tree a b -> Int
--- treeDepth Empty  = 0
--- treeDepth Leaf _ = 1
--- treeDepth (Node _ leftSubtree rightSubtree) = 
---   1 + max (treeDepth leftSubtree) (treeDepth rightSubtree)
-
--- traverseDF :: Tree a -> [a]
--- traverseDF Empty        = []
--- traverseDF (Node a l r) = a : (traverseDF l) ++ (traverseDF r)
--- 
--- traverseBF :: Tree a -> [a]
--- traverseBF tree = tbf [tree]
---     where
---         tbf [] = []
---         tbf xs = map nodeValue xs ++ tbf (concat (map leftAndRightNodes xs))
---         nodeValue (Node a _ _) = a
---         leftAndRightNodes (Node _ Empty Empty) = []
---         leftAndRightNodes (Node _ Empty b)     = [b]
---         leftAndRightNodes (Node _ a Empty)     = [a]
---         leftAndRightNodes (Node _ a b)         = [a,b]
--- 
--- listFlatToTreeDF :: [a] -> Tree a
--- listFlatToTreeDF [] = Empty
--- listFlatToTreeDF [x] = Node x Empty Empty
--- listFlatToTreeDF l = Node x (listFlatToTreeDF ltx) (listFlatToTreeDF gtx)
---     where
---         m = length l `div` 2
---         x = l !! m
---         ltx = take m l
---         gtx = drop (m+1) l
-
-
---listToTreeBF :: [a] -> Tree a
-
+-- testing
 -- demo data
-t = Node "parent" (Node "l1" (Leaf ["L_ll1"]) (Leaf ["L_lr1"])) (Node "r1" (Leaf ["L_rl1"]) (Leaf ["L_rr1"]))
+t = Node "parent"
+    (Node "l1"
+        (Leaf ["L_ll1"])
+        (Leaf ["L_lr1"]))
+    (Node "r1"
+        (Leaf ["L_rl1"])
+        (Node "rr1" (Leaf ["L_rrl1"]) (Leaf ["L_rrr1"])))
 zipa = (t, [])
 mfoc = return zipa >>= goLeft >>= goRight
 
+exf :: Zipper [[Char]] [Char] -> Zipper [[Char]] [Char]
+exf (Leaf x, bs) = (Leaf ((parents z) ++ x), bs)
+    where 
+        z = (Leaf x, bs)
+exf (Node x l r, bs) = (Node ((unwords $ parents z) ++ x) l r, bs) 
+    where 
+        z = (Node x l r, bs)
+
+
 -- define:
-    -- zipper
-    -- goUp, goLeft, goRight, isLeaf
+    -- OK zipper
+    -- OK goUp, goLeft, goRight, isLeaf
     -- method to locate visualizer based on its name
+    -- render :: Zipper a b -> Image
 

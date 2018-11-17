@@ -21,7 +21,8 @@ import qualified Data.Vector.Storable as V
 import Sound.Pulse.Simple
 import Numeric.FFT.Vector.Plan
 import Numeric.FFT.Vector.Unitary
-import qualified Numeric.FFT.Vector.Invertible as I
+-- import qualified Numeric.FFT.Vector.Invertible as I
+import qualified Numeric.FFT.Vector.Unitary as I
 
 import Graphics.Vty
 import Graphics.Vty.Attributes
@@ -40,13 +41,20 @@ import Visualizers
     -- OK (1) start vty watcher thread
         -- OK use nextEvent to get a new event in a blocking fashion
     -- OK (2) check for MVar 
--- remove charsFade when input value < 3
--- fix output dimensions
-    -- (3) get terminal size 
--- save the last fft (list?) and average with the current one to show image
+-- OK remove charsFade when input value < 3
+-- OK fix output dimensions
+    -- OK (3) get terminal size 
+
+-- fft
+    -- OK save the last fft (list?) and average with the current one to show image
+    -- fix interestedFFTPart stuff and downsampling to avoid taking 0 values
+    -- implement log scaling
+    -- create little indicators sweeping from top to bottom for peaks
+    -- add vertical mode
 -- figure out tree stuff...
 -- criterion measuring
 -- or profiling
+-- look for features in colorchord 2
 
 
 
@@ -59,14 +67,15 @@ qgracefulShutdown h = do
 
 
 -- move these
-volMaxChars = 0.9 -- scaling
+volMaxChars = 30.0 -- 0.8 -- scaling
 barWidth = 1
-binsToTake = 128
-maxBarLen = 20 -- height
+binsToTake = 100
+maxBarLen = 15 -- height
 
 -- fft options
-historySize = 3
-waCoefs = [0.7, 0.2, 0.1]
+historySize = 7
+waCoefs = [0.5, 0.15, 0.15, 0.05, 0.05, 0.05, 0.05]
+interestedFFTPart = 0.9
 
 -- initial values
 defaultBufferchunk = 2048 -- 1024
@@ -303,7 +312,7 @@ displayFFT h vec = do
         bins = binsToTake
         wdh = bins * barWidth
         l = fromIntegral (V.length vec) :: Double
-        interested = V.take (floor (l * 0.7)) vec
+        interested = V.take (floor (l * interestedFFTPart)) vec
         slice = downsample bins interested
         lslice = V.toList slice
         images = map (\val -> valToImage val) lslice
