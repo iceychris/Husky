@@ -38,6 +38,7 @@ data Husky = Husky {
     vtyInstance :: Vty,
     window_width :: Int,
     window_height :: Int,
+    window_layout :: Zipper Visualizer Window,
     
     charsEmpty :: Char,
     charsFilled :: Char,
@@ -53,6 +54,7 @@ data Husky = Husky {
 
 data Audio = Audio {
     audioSample :: V.Vector Double,
+    audioSampleFiltered :: V.Vector Double,
     audioVolume :: Int,
     audioFFT :: V.Vector (Complex Double),
     audioFFTSqHistory :: [V.Vector Double],
@@ -61,7 +63,7 @@ data Audio = Audio {
 
 weightedAverageSq :: [Double] -> Audio -> V.Vector Double
 weightedAverageSq coef aud =
-    if not lengthesMatch then error "lengthes of coefficients and history do not match"
+    if not lengthesMatch then error "lengths of coefficients and history do not match"
     else if not coefAddUpToOne then error "coefficients do not add up to 1"
     else ret 
     where
@@ -82,7 +84,7 @@ weightedAverageSq coef aud =
 -- fix this shitty stuff...
 -- TODO implement addition here
 -- TODO VERY INEFFICIENT
---  ~0.8sec for 4_000_000 long vecs
+--  ~0.8sec for (V.length vec == 4_000_000) vecs
 addVecs :: V.Vector Double -> V.Vector Double -> V.Vector Double 
 addVecs a b = V.fromList $ zipWith (+) la lb
     where
@@ -94,35 +96,34 @@ addVecs a b = V.fromList $ zipWith (+) la lb
 -- try omitting Husky in the type list
 -- instead, maybe just pass the audio data?
 data Visualizer = Visualizer {
-    name :: String,
+    vis_name :: String,
     vis_width :: Int,
     vis_height :: Int,
-    visualize :: Visualizer -> Audio -> Image
+    visualize :: Visualizer -> Husky -> Audio -> Image
 }
-instance Show Visualizer where show vis = name vis 
+instance Show Visualizer where show v = "Vis(" ++ show (vis_width v) ++ ", " ++ show (vis_height v) ++ ")"
 
 
-data Orient =  Horiz | Verti deriving (Show)
-type Percentage = Double
+data Orient =  Horiz | Verti deriving (Eq, Show)
 
 -- inner nodes
 -- are Windows 
-type Window = (Orient, Percentage)
+data Window = Window {
+    orient :: Orient,
+    percentage :: Double,
+    win_width :: Int,
+    win_height :: Int
+} deriving (Eq, Show)
 
 -- leaves 
 -- are Visualizers
 
-
--- can we use this as a basic datastructure for our windows?
--- it has some representations were multiple configs are possible
--- data Tree a = Empty | Node a (Tree a) (Tree a) | Leaf a deriving (Show)  
 
 -- instead one could just use this with maybe data...
 data Tree a b = Leaf a | Node b (Tree a b) (Tree a b) deriving (Eq, Show, Functor, Foldable)
 data Crumb a b = LeftCrumb b (Tree a b) | RightCrumb b (Tree a b) deriving (Show, Functor, Foldable)  
 type Breadcrumbs a b = [Crumb a b] 
 type Zipper a b = (Tree a b, Breadcrumbs a b)
-type ZipVisWin = Zipper Visualizer Window
 
 goLeft :: Zipper a b -> Maybe (Zipper a b)  
 goLeft (Node x l r, bs) = Just (l, LeftCrumb x r:bs)  
@@ -147,8 +148,6 @@ goRightUnsafe (t, bs) = (t, bs)
 goUpUnsafe :: Zipper a b -> Zipper a b  
 goUpUnsafe (t, LeftCrumb x r:bs) = (Node x t r, bs)
 goUpUnsafe (t, RightCrumb x l:bs) = (Node x l t, bs)
-
-
 
 parents :: Zipper a b -> [b]
 parents (_, []) = []
@@ -195,6 +194,51 @@ exf (Leaf x, bs) = (Leaf ((parents z) ++ x), bs)
 exf (Node x l r, bs) = (Node ((unwords $ parents z) ++ x) l r, bs) 
     where 
         z = (Node x l r, bs)
+
+
+-- ((focused leaf) -> accu)) -> (root tree) -> result
+-- only call with root focused
+myfold :: (Zipper a b -> Maybe c -> c) -> Maybe c -> Zipper a b -> c
+myfold f Nothing (Leaf x, bs) = f z Nothing
+    where
+        z = (Leaf x, bs)
+
+-- we might have to do sth different here
+myfold f (Just accu) (Leaf x, bs) = f z Nothing
+    where
+        z = (Leaf x, bs)
+myfold f accu z = go z
+    where
+        -- recursion has to be in here
+        -- evaluate left and pass it as accumulator to right evaluation
+        go (Node w (Leaf vl) r, bs) = myfold f (Just (f (goLeftUnsafe z) Nothing)) (goRightUnsafe z)
+        -- go (Node w (Leaf vl) (Leaf vr), bs) = (f (goLeftUnsafe z) ...) (f (goRightUnsafe z))
+
+
+
+renderhelp :: Husky -> Zipper Visualizer Window -> Maybe Image -> Image
+renderhelp _ (Node _ _ _, _) _ = error "renderhelp should only be called with leaves"
+renderhelp husky (Leaf x, bs) accu =
+    if isEmpty bs then imgResized
+    else
+        if isVerti (orient parent)
+        then prepared <-> imgResized
+        else prepared <|> imgResized
+    where
+        z = (Leaf x, bs)
+        isEmpty [] = True
+        isEmpty x  = False
+        parent = head $ parents z 
+        isVerti Verti = True 
+        isVerti Horiz = False 
+        w = (vis_width x)
+        h = (vis_height x)
+        aud = audio husky
+        img = (visualize x) x husky aud
+        imgResized = resize w h img
+        prepareAccu Nothing = string defAttr ""
+        prepareAccu (Just accu) = accu 
+        prepared = prepareAccu accu
 
 
 -- define:

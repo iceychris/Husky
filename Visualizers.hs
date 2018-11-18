@@ -12,12 +12,16 @@ visEmpty v a = string defAttr ""
 
 -- i dont know about that one...
 info = Visualizer {
-    name = "Info Visualizer",
+    vis_name = "Info Visualizer",
     vis_width = 40,
     vis_height = 10
 }
+
+visDummy :: Visualizer -> Husky -> Audio -> Image
+visDummy v _ _ = string defAttr ("| dummy | " ++ vis_name v ++ " |")
+
 visInfo :: Husky -> Visualizer -> Image
-visInfo h v = string defAttr $ name v
+visInfo h v = string defAttr $ vis_name v
 
 visMetrics :: Husky -> Visualizer -> Image
 visMetrics h v = string defAttr $ description h

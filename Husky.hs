@@ -99,8 +99,9 @@ huskyDefault = Husky {
 
     fftInput         = fftInputs,
 
-    window_width     = 0,
-    window_height    = 0,
+    window_width     = 1400,
+    window_height    = 900,
+    window_layout    = defaultLayout,
 
     charsEmpty       = ' ',
     charsFilled      = '█',
@@ -112,37 +113,86 @@ huskyDefault = Husky {
 }
 
 vInfo = Visualizer {
-    name = "info"
+    vis_name = "info",
+    visualize = visDummy,
+    vis_width = -1,
+    vis_height = -1
 }
 vPower = Visualizer {
-    name = "power"
+    vis_name = "power",
+    visualize = visDummy,
+    vis_width = -1,
+    vis_height = -1
 }
 vFFT = Visualizer {
-    name = "fft"
+    vis_name = "fft",
+    visualize = visDummy,
+    vis_width = -1,
+    vis_height = -1
 }
-layout = Node (Verti, 0.5)
-        (Leaf vInfo) (Node (Horiz, 0.5) (Leaf vPower) (Leaf vFFT))
-layoutZ = (layout,[])
+ver = Window {
+    orient = Verti,
+    percentage = 0.4,
+    win_width = 0,
+    win_height = 0
+}
+hor = Window {
+    orient = Horiz,
+    percentage = 0.6,
+    win_width = 0,
+    win_height = 0
+}
+-- defaultLayout = (Node ver 
+--         (Leaf vInfo) (Node hor (Leaf vPower) (Leaf vFFT)), [])
+defaultLayout = (Leaf vInfo, [])
 
 -- (w,h) -> ...
--- critical issue: we need to iterate breadth first!
--- because we first need to fill w and h of the root node
--- also, we have to extend window to have w and h...
--- options
--- 1. rewrite traverseParent to breadth first
--- 2. rewrite traverseParent to use Zipper instead of Tree (path to root tree would suffice)
--- 3. alter the function to take in a list of windows.
---    then always get some way to turn a zipper into a list of passed inner nodes
-fillVisDims :: (Int, Int) -> Tree Visualizer Window -> Tree Visualizer Window -> Tree Visualizer Window
-fillVisDims (w,h) (Node x _ _) (Leaf y) = Leaf y
-
-fillVisDims2 :: (Int, Int) -> Zipper Visualizer Window -> Tree Visualizer Window
-fillVisDims2 (w,h) (Leaf y, bs) = Leaf (updateVis y) 
+-- TODO make this function shorter...
+fillVisDims :: (Int, Int) -> Zipper Visualizer Window -> Zipper Visualizer Window
+fillVisDims (w,h) (Node x l r, []) = z
     where
-        ws = parents (Leaf y, bs)
-        ps = unwords $ map (\w -> (show $ fst w)) ws
-        updateVis x = x { name = ps }
+        update x w h = x { win_width = w, win_height = h }
+        z = (Node (update x w h) l r, [])
+fillVisDims (w,h) (Leaf y, []) = z
+    where
+        update x w h = x { vis_width = w, vis_height = h }
+        z = (Leaf (update y w h), [])
+fillVisDims (w,h) (Node x l r, bs) = (Node (update x nww nhh) l r, bs) 
+    where 
+        parent = head $ parents (Node x l r, bs)
+        pcent = percentage parent
+        winw = win_width parent
+        winh = win_height parent
+        nw Horiz = winw
+        nw Verti = floor ((fromIntegral winw) * pcent) 
+        nh Horiz = floor ((fromIntegral winh) * pcent)
+        nh Verti = winh 
+        nww = nw $ orient parent
+        nhh = nh $ orient parent
+        update x w h = x { win_width = w, win_height = h }
+fillVisDims (w,h) (Leaf y, bs) = (Leaf (update y nww nhh), bs)
+    where 
+        parent = head $ parents (Leaf y, bs)
+        pcent = percentage parent
+        winw = win_width parent
+        winh = win_height parent
+        nw Horiz = winw
+        nw Verti = floor ((fromIntegral winw) * pcent) 
+        nh Horiz = floor ((fromIntegral winh) * pcent)
+        nh Verti = winh 
+        nww = nw $ orient parent
+        nhh = nh $ orient parent
+        update x w h = x { vis_width = w, vis_height = h }
 
+-- render
+-- we need a depth first fold?
+render :: Husky -> Image
+render husky = myfold (renderhelp husky) Nothing (traverseContextBF defaultLayout $ fillVisDims (w,h))
+    where
+        aud = audio husky
+        w = window_width husky
+        h = window_height husky
+        layout = window_layout husky
 
 
 -- make calculations on data possible
@@ -179,7 +229,6 @@ bar chs chFa mbarlen n | n < 3  = (take n chFa) ++ (replicate (mbarlen-n) $ fst 
         filled = replicate (n-3) $ snd chs
 
 
-
 --
 a = ' '
 b = '█'
@@ -193,8 +242,6 @@ strBar n = map (\c -> [c]) (barApplied n)
 -- value, maximum
 vbar :: Float -> Float -> IO ()
 vbar val maxi = putStrLn $ barApplied $ displayable val maxi
-
-
 
 
 -- vertically concatenated bar, e.g.
