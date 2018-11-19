@@ -207,13 +207,18 @@ myfold f Nothing (Leaf x, bs) = f z Nothing
 myfold f (Just accu) (Leaf x, bs) = f z Nothing
     where
         z = (Leaf x, bs)
-myfold f accu z = go z
-    where
-        -- recursion has to be in here
-        -- evaluate left and pass it as accumulator to right evaluation
-        go (Node w (Leaf vl) r, bs) = myfold f (Just (f (goLeftUnsafe z) Nothing)) (goRightUnsafe z)
-        -- go (Node w (Leaf vl) (Leaf vr), bs) = (f (goLeftUnsafe z) ...) (f (goRightUnsafe z))
 
+-- two leaves WO accu
+myfold f Nothing (Node x (Leaf l) (Leaf r), bs) = f (goRightUnsafe z) lapplied
+    where 
+        z = (Node x (Leaf l) (Leaf r), bs)
+        lapplied = Just (f (goLeftUnsafe z) Nothing)
+
+-- two leaves WITH accu
+myfold f (Just accu) (Node x (Leaf l) (Leaf r), bs) = f (goRightUnsafe z) lapplied
+    where 
+        z = (Node x (Leaf l) (Leaf r), bs)
+        lapplied = Just (f (goLeftUnsafe z) Nothing)
 
 
 renderhelp :: Husky -> Zipper Visualizer Window -> Maybe Image -> Image
@@ -222,8 +227,8 @@ renderhelp husky (Leaf x, bs) accu =
     if isEmpty bs then imgResized
     else
         if isVerti (orient parent)
-        then prepared <-> imgResized
-        else prepared <|> imgResized
+        then prepared <|> imgResized
+        else prepared <-> imgResized
     where
         z = (Leaf x, bs)
         isEmpty [] = True

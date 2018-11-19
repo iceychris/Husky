@@ -132,7 +132,7 @@ vFFT = Visualizer {
 }
 ver = Window {
     orient = Verti,
-    percentage = 0.4,
+    percentage = 0.5,
     win_width = 0,
     win_height = 0
 }
@@ -142,9 +142,11 @@ hor = Window {
     win_width = 0,
     win_height = 0
 }
--- defaultLayout = (Node ver 
---         (Leaf vInfo) (Node hor (Leaf vPower) (Leaf vFFT)), [])
-defaultLayout = (Leaf vInfo, [])
+defaultLayout = (Node ver 
+        (Leaf vInfo) (Node hor (Leaf vPower) (Leaf vFFT)), [])
+-- defaultLayout = (Leaf vInfo, [])
+-- defaultLayout = (Node ver (Leaf vInfo) (Leaf vPower), [])
+
 
 -- (w,h) -> ...
 -- TODO make this function shorter...
@@ -384,7 +386,8 @@ centerRect (w, h) img = translate tx ty img
 
 displayAll :: Husky -> IO ()
 displayAll h = do
-    update vty $ picForImage cropped 
+    -- update vty $ picForImage cropped 
+    update vty $ picForImage (render h) 
     where
         -- img = visBox h info
         ffts = weightedAverageSq waCoefs (audio h)
@@ -435,7 +438,7 @@ shouldAbort ev = case ev of
 watchForIOEvents :: Husky -> IO ()
 watchForIOEvents h = do
     ev <- nextEvent vty
-    putStrLn $ show ev
+    -- putStrLn $ show ev
 
     -- send over to other thread
     putMVar qiobox $ ev 

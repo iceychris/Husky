@@ -18,7 +18,7 @@ info = Visualizer {
 }
 
 visDummy :: Visualizer -> Husky -> Audio -> Image
-visDummy v _ _ = string defAttr ("| dummy | " ++ vis_name v ++ " |")
+visDummy v _ _ = string defAttr ("| dummy | " ++ vis_name v ++ " | (" ++ (show $ vis_width v) ++ "," ++ (show $ vis_height v) ++ ")")
 
 visInfo :: Husky -> Visualizer -> Image
 visInfo h v = string defAttr $ vis_name v
