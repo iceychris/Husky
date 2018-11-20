@@ -23,6 +23,9 @@ import Numeric.FFT.Vector.Plan
 import Numeric.FFT.Vector.Unitary
 -- import qualified Numeric.FFT.Vector.Invertible as I
 import qualified Numeric.FFT.Vector.Unitary as I
+import Data.Typeable
+import Data.Bifunctor
+import Data.Functor.Foldable
 
 import Graphics.Vty
 import Graphics.Vty.Attributes
@@ -142,26 +145,26 @@ hor = Window {
     win_width = 0,
     win_height = 0
 }
-defaultLayout = (Node ver 
-        (Leaf vInfo) (Node hor (Leaf vPower) (Leaf vFFT)), [])
+defaultLayout = (Branch ver 
+        (Leaf vInfo) (Branch hor (Leaf vPower) (Leaf vFFT)), [])
 -- defaultLayout = (Leaf vInfo, [])
--- defaultLayout = (Node ver (Leaf vInfo) (Leaf vPower), [])
+-- defaultLayout = (Branch ver (Leaf vInfo) (Leaf vPower), [])
 
 
 -- (w,h) -> ...
 -- TODO make this function shorter...
-fillVisDims :: (Int, Int) -> Zipper Visualizer Window -> Zipper Visualizer Window
-fillVisDims (w,h) (Node x l r, []) = z
+fillVisDims :: (Int, Int) -> ZWV -> ZWV 
+fillVisDims (w,h) (Branch x l r, []) = z
     where
         update x w h = x { win_width = w, win_height = h }
-        z = (Node (update x w h) l r, [])
+        z = (Branch (update x w h) l r, [])
 fillVisDims (w,h) (Leaf y, []) = z
     where
         update x w h = x { vis_width = w, vis_height = h }
         z = (Leaf (update y w h), [])
-fillVisDims (w,h) (Node x l r, bs) = (Node (update x nww nhh) l r, bs) 
+fillVisDims (w,h) (Branch x l r, bs) = (Branch (update x nww nhh) l r, bs) 
     where 
-        parent = head $ parents (Node x l r, bs)
+        parent = head $ parents (Branch x l r, bs)
         pcent = percentage parent
         winw = win_width parent
         winh = win_height parent
@@ -186,15 +189,21 @@ fillVisDims (w,h) (Leaf y, bs) = (Leaf (update y nww nhh), bs)
         nhh = nh $ orient parent
         update x w h = x { vis_width = w, vis_height = h }
 
--- render
--- we need a depth first fold?
 render :: Husky -> Image
-render husky = myfold (renderhelp husky) Nothing (traverseContextBF defaultLayout $ fillVisDims (w,h))
+-- render husky = cata (renderhelp2 husky) calculatedT  
+render husky = string defAttr ""
     where
         aud = audio husky
         w = window_width husky
         h = window_height husky
         layout = window_layout husky
+        calculatedT = fst (traverseContextBF defaultLayout $ fillVisDims (w,h))
+
+-- renderhelp2 :: Husky -> BiTree Window Visualizer -> Image
+-- renderhelp2 husky bt = alg bt
+--     where
+--         alg (LeafF v) = (visualize v) v husky (audio husky)
+--         alg (BranchF w l r) = string defAttr ""
 
 
 -- make calculations on data possible

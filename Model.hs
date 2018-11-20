@@ -1,5 +1,4 @@
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveFoldable #-}
+{-# language DeriveFunctor, DeriveTraversable, DeriveFoldable, TypeFamilies  #-}
 
 module Model where
 
@@ -8,8 +7,10 @@ import Data.Maybe
 import Data.Int
 import Data.Complex
 import GHC.Float
-import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar (newEmptyMVar, tryTakeMVar, putMVar, MVar)
+import Data.Typeable
+import Data.Bifunctor
+import Data.Functor.Foldable
+import Control.Concurrent.MVar (MVar)
 
 -- 3rd party
 import qualified Data.Vector.Storable as V
@@ -23,6 +24,8 @@ import Graphics.Vty
 -- local
 import Util
 
+
+type ZWV = Zipper Window Visualizer
 
 data Husky = Husky {
     title :: String,
@@ -38,7 +41,7 @@ data Husky = Husky {
     vtyInstance :: Vty,
     window_width :: Int,
     window_height :: Int,
-    window_layout :: Zipper Visualizer Window,
+    window_layout :: ZWV,
     
     charsEmpty :: Char,
     charsFilled :: Char,
@@ -119,131 +122,121 @@ data Window = Window {
 -- are Visualizers
 
 
--- instead one could just use this with maybe data...
-data Tree a b = Leaf a | Node b (Tree a b) (Tree a b) deriving (Eq, Show, Functor, Foldable)
-data Crumb a b = LeftCrumb b (Tree a b) | RightCrumb b (Tree a b) deriving (Show, Functor, Foldable)  
-type Breadcrumbs a b = [Crumb a b] 
-type Zipper a b = (Tree a b, Breadcrumbs a b)
+------------
+-- BiTree implementation
+-- taken from https://stackoverflow.com/questions/41524960/recursion-schemes-using-fix-on-a-data-type-thats-already-a-functor
+------------
 
-goLeft :: Zipper a b -> Maybe (Zipper a b)  
-goLeft (Node x l r, bs) = Just (l, LeftCrumb x r:bs)  
+data BiTree b l =
+    Branch b (BiTree b l) (BiTree b l)
+    | Leaf l
+    deriving (Show, Typeable, Functor, Traversable, Foldable)
+
+instance Bifunctor BiTree where
+  bimap _ g (Leaf x) = Leaf (g x)
+  bimap f g (Branch b l r) = Branch (f b) (bimap f g l) (bimap f g r)
+
+data BiTreeF b l r =
+  BranchF b r r
+    | LeafF l
+    deriving (Show, Functor, Typeable)
+
+type instance Base (BiTree a b) = BiTreeF a b
+instance Recursive (BiTree a b) where
+  project (Leaf x) = LeafF x
+  project (Branch s l r) = BranchF s l r
+
+instance Corecursive (BiTree a b) where
+  embed (BranchF sp x xs) = Branch sp x xs
+  embed (LeafF x) = Leaf x
+
+
+------------
+-- Zippers
+------------
+
+data Crumb b l = LeftCrumb b (BiTree b l) | RightCrumb b (BiTree b l) deriving (Show, Functor, Foldable)  
+type Breadcrumbs b l = [Crumb b l] 
+type Zipper b l = (BiTree b l, Breadcrumbs b l)
+
+goLeft :: Zipper b l -> Maybe (Zipper b l)  
+goLeft (Branch x ll rr, bs) = Just (ll, LeftCrumb x rr:bs)  
 goLeft (Leaf y, _) = Nothing  
   
-goRight :: Zipper a b -> Maybe (Zipper a b)  
-goRight (Node x l r, bs) = Just (r, RightCrumb x l:bs)  
+goRight :: Zipper b l -> Maybe (Zipper b l)  
+goRight (Branch x ll rr, bs) = Just (rr, RightCrumb x ll:bs)  
 goRight (Leaf y, _) = Nothing  
 
-isLeaf :: Maybe (Zipper a b) -> Bool
+isLeaf :: Maybe (Zipper b l) -> Bool
 isLeaf (Just (Leaf _, _)) = True
 isLeaf _ = False
 
-goLeftUnsafe :: Zipper a b -> Zipper a b 
-goLeftUnsafe (Node x l r, bs) = (l, LeftCrumb x r:bs)
+goLeftUnsafe :: Zipper b l -> Zipper b l 
+goLeftUnsafe (Branch x ll rr, bs) = (ll, LeftCrumb x rr:bs)
 goLeftUnsafe (t, bs) = (t, bs)  
   
-goRightUnsafe :: Zipper a b -> Zipper a b
-goRightUnsafe (Node x l r, bs) = (r, RightCrumb x l:bs)
+goRightUnsafe :: Zipper b l -> Zipper b l
+goRightUnsafe (Branch x ll rr, bs) = (rr, RightCrumb x ll:bs)
 goRightUnsafe (t, bs) = (t, bs)  
 
-goUpUnsafe :: Zipper a b -> Zipper a b  
-goUpUnsafe (t, LeftCrumb x r:bs) = (Node x t r, bs)
-goUpUnsafe (t, RightCrumb x l:bs) = (Node x l t, bs)
+goUpUnsafe :: Zipper b l -> Zipper b l  
+goUpUnsafe (t, LeftCrumb x r:bs) = (Branch x t r, bs)
+goUpUnsafe (t, RightCrumb x l:bs) = (Branch x l t, bs)
 
-parents :: Zipper a b -> [b]
+parents :: Zipper b l -> [b]
 parents (_, []) = []
 parents (_, [LeftCrumb x t]) = [x]
 parents (_, [RightCrumb x t]) = [x]
 parents (t, (LeftCrumb x t2):cs)  = [x] ++ parents (t, cs) 
 parents (t, (RightCrumb x t2):cs) = [x] ++ parents (t, cs) 
 
-parentsMaybe :: Maybe (Zipper a b) -> [b]
+parentsMaybe :: Maybe (Zipper b l) -> [b]
 parentsMaybe Nothing = []
 parentsMaybe (Just z) = parents z 
 
-traverseContextBF :: Zipper a b -> (Zipper a b -> Zipper a b) -> Zipper a b
+traverseContextBF :: Zipper b l -> (Zipper b l -> Zipper b l) -> Zipper b l
 traverseContextBF (Leaf a, bs) f = f (Leaf a, bs)
-traverseContextBF (Node x l r, bs) f = rec zApplied 
+traverseContextBF (Branch x l r, bs) f = rec zApplied 
     where 
-        z = (Node x l r, bs)
+        z = (Branch x l r, bs)
         zApplied = f z
         rec (Leaf a, bsr) = error "rec (Leaf a,...) called. this should not happen. Audit your zip -> zip function"
-        rec (Node y ll rr, bsr) =
-            (Node y
+        rec (Branch y ll rr, bsr) =
+            (Branch y
                 (fst (traverseContextBF (goLeftUnsafe (mtree, bsr)) f))
                 (fst (traverseContextBF (goRightUnsafe (mtree, bsr)) f))
             , bsr)
             where
-                mtree = (Node y ll rr)
-
--- testing
--- demo data
-t = Node "parent"
-    (Node "l1"
-        (Leaf ["L_ll1"])
-        (Leaf ["L_lr1"]))
-    (Node "r1"
-        (Leaf ["L_rl1"])
-        (Node "rr1" (Leaf ["L_rrl1"]) (Leaf ["L_rrr1"])))
-zipa = (t, [])
-mfoc = return zipa >>= goLeft >>= goRight
-
-exf :: Zipper [[Char]] [Char] -> Zipper [[Char]] [Char]
-exf (Leaf x, bs) = (Leaf ((parents z) ++ x), bs)
-    where 
-        z = (Leaf x, bs)
-exf (Node x l r, bs) = (Node ((unwords $ parents z) ++ x) l r, bs) 
-    where 
-        z = (Node x l r, bs)
+                mtree = (Branch y ll rr)
 
 
--- ((focused leaf) -> accu)) -> (root tree) -> result
--- only call with root focused
-myfold :: (Zipper a b -> Maybe c -> c) -> Maybe c -> Zipper a b -> c
-myfold f Nothing (Leaf x, bs) = f z Nothing
-    where
-        z = (Leaf x, bs)
+------------
+-- helper functions
+------------
 
--- we might have to do sth different here
-myfold f (Just accu) (Leaf x, bs) = f z Nothing
-    where
-        z = (Leaf x, bs)
-
--- two leaves WO accu
-myfold f Nothing (Node x (Leaf l) (Leaf r), bs) = f (goRightUnsafe z) lapplied
-    where 
-        z = (Node x (Leaf l) (Leaf r), bs)
-        lapplied = Just (f (goLeftUnsafe z) Nothing)
-
--- two leaves WITH accu
-myfold f (Just accu) (Node x (Leaf l) (Leaf r), bs) = f (goRightUnsafe z) lapplied
-    where 
-        z = (Node x (Leaf l) (Leaf r), bs)
-        lapplied = Just (f (goLeftUnsafe z) Nothing)
-
-
-renderhelp :: Husky -> Zipper Visualizer Window -> Maybe Image -> Image
-renderhelp _ (Node _ _ _, _) _ = error "renderhelp should only be called with leaves"
-renderhelp husky (Leaf x, bs) accu =
-    if isEmpty bs then imgResized
-    else
-        if isVerti (orient parent)
-        then prepared <|> imgResized
-        else prepared <-> imgResized
-    where
-        z = (Leaf x, bs)
-        isEmpty [] = True
-        isEmpty x  = False
-        parent = head $ parents z 
-        isVerti Verti = True 
-        isVerti Horiz = False 
-        w = (vis_width x)
-        h = (vis_height x)
-        aud = audio husky
-        img = (visualize x) x husky aud
-        imgResized = resize w h img
-        prepareAccu Nothing = string defAttr ""
-        prepareAccu (Just accu) = accu 
-        prepared = prepareAccu accu
+-- renderhelp :: Husky -> Zipper Visualizer Window -> Maybe Image -> Image
+-- renderhelp _ (Branch _ _ _, _) _ = error "renderhelp should only be called with leaves"
+-- renderhelp husky (Leaf x, bs) accu =
+--     if isEmpty bs then imgResized
+--     else
+--         if isVerti (orient parent)
+--         then prepared <|> imgResized
+--         else prepared <-> imgResized
+--     where
+--         z = (Leaf x, bs)
+--         isEmpty [] = True
+--         isEmpty x  = False
+--         parent = head $ parents z 
+--         isVerti Verti = True 
+--         isVerti Horiz = False 
+--         w = (vis_width x)
+--         h = (vis_height x)
+--         aud = audio husky
+--         img = (visualize x) x husky aud
+--         imgResized = resize w h img
+--         prepareAccu Nothing = string defAttr ""
+--         prepareAccu (Just accu) = accu 
+--         prepared = prepareAccu accu
 
 
 -- define:
