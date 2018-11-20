@@ -102,7 +102,7 @@ data Visualizer = Visualizer {
     vis_name :: String,
     vis_width :: Int,
     vis_height :: Int,
-    visualize :: Visualizer -> Husky -> Audio -> Image
+    visualize :: Visualizer -> Husky -> Image
 }
 instance Show Visualizer where show v = "Vis(" ++ show (vis_width v) ++ ", " ++ show (vis_height v) ++ ")"
 

@@ -1,14 +1,14 @@
 module Visualizers where
 
 -- 3rd party
+import qualified Data.Vector.Storable as V
 import Graphics.Vty
 
 -- local
 import Model
+import Util
 
 
-visEmpty :: Visualizer -> Audio -> Image
-visEmpty v a = string defAttr ""
 
 -- i dont know about that one...
 info = Visualizer {
@@ -17,19 +17,34 @@ info = Visualizer {
     vis_height = 10
 }
 
-visDummy :: Visualizer -> Husky -> Audio -> Image
-visDummy v _ _ = string defAttr ("| dummy | " ++ vis_name v ++ " | (" ++ (show $ vis_width v) ++ "," ++ (show $ vis_height v) ++ ")")
+visEmpty :: Visualizer -> Husky -> Image
+visEmpty _ _ = string defAttr ""
 
-visInfo :: Husky -> Visualizer -> Image
-visInfo h v = string defAttr $ vis_name v
+visDummy :: Visualizer -> Husky -> Image
+visDummy v _ = string defAttr ("| dummy | " ++ vis_name v ++ " | (" ++ (show $ vis_width v) ++ "," ++ (show $ vis_height v) ++ ")")
 
-visMetrics :: Husky -> Visualizer -> Image
-visMetrics h v = string defAttr $ description h
+visPower :: Visualizer -> Husky -> Image
+visPower v h = 
+    cr " " <-> cr "Power: " <-> cr barB
+    where
+        cr = string defAttr
+        aud = audio h
+        last = head $ audioFFTSqHistory aud
+        maxi = V.maximum last
+        barA = show maxi
+        barB = barApplied $ displayable maxi 20.0
+
+visVInfo :: Visualizer -> Husky -> Image
+visVInfo v h = string defAttr $ vis_name v
+
+visHInfo :: Visualizer -> Husky -> Image
+visHInfo v h = string defAttr $ description h
+
 
 -- draw a simple box in the 
 -- bounds specified by the visualizer
-visBox :: Husky -> Visualizer -> Image
-visBox h v = img 
+visBox :: Visualizer -> Husky -> Image
+visBox v h = img 
     where
         w = vis_width v
         h = vis_height v
@@ -38,4 +53,21 @@ visBox h v = img
         allMid = vertCat $ replicate (h - 2) rowMid
         img = vertJoin rowUpDown $ vertJoin allMid rowUpDown
 
+
+------------
+-- Visualizers
+------------
+
+mkVis name f = Visualizer {
+    vis_name = name,
+    visualize = f,
+    vis_width = -1,
+    vis_height = -1
+}
+
+vInfo = mkVis "info" visDummy
+vHInfo = mkVis "husky info" visHInfo
+vVInfo = mkVis "visualizer info" visVInfo
+vPower = mkVis "power" visPower
+vBox = mkVis "Box" visBox
 

@@ -59,18 +59,24 @@ import Visualizers
 -- or profiling
 -- look for features in colorchord 2
 
+-- refactoring
+    -- OK delete old commented out code
+    -- rewrite fillVisDims to use inherit / synthesize
+    -- move real visualizers into Visualizers.hs
+    -- create Config.hs and move all initial structures
 
 
 qgracefulShutdown :: Husky -> IO ()
-qgracefulShutdown h = do
-    putStrLn "qgracefulShutdow not implemented"
-    --(vtyInstance h) >>= shutdown
-    --(recSimple h) >>= simpleFree
+qgracefulShutdown h = gracefulShutdown (vtyInstance h) (recSimple h)
 
+gracefulShutdown :: Vty -> Simple -> IO ()
+gracefulShutdown vty s = do
+    putStrLn "gracefully shutting down Vty and Simple..."
+    sequence_ [shutdown vty, simpleFree s] 
 
 
 -- move these
-volMaxChars = 30.0 -- 0.8 -- scaling
+volMaxChars = 120.0 -- 0.8 -- scaling
 barWidth = 1
 binsToTake = 100
 maxBarLen = 15 -- height
@@ -115,18 +121,6 @@ huskyDefault = Husky {
     audio            = defaultAudio
 }
 
-vInfo = Visualizer {
-    vis_name = "info",
-    visualize = visDummy,
-    vis_width = -1,
-    vis_height = -1
-}
-vPower = Visualizer {
-    vis_name = "power",
-    visualize = visDummy,
-    vis_width = -1,
-    vis_height = -1
-}
 vFFT = Visualizer {
     vis_name = "fft",
     visualize = visFFT,
@@ -146,7 +140,11 @@ hor = Window {
     win_height = 0
 }
 defaultLayout = (Branch ver 
-        (Leaf vInfo) (Branch hor (Leaf vPower) (Leaf vFFT)), [])
+            (Branch hor
+                (Branch hor (Leaf vHInfo) (Leaf vBox))
+                (Leaf vVInfo))
+            (Branch hor (Leaf vFFT) (Leaf vPower))
+        , [])
 -- defaultLayout = (Leaf vInfo, [])
 -- defaultLayout = (Branch ver (Leaf vInfo) (Leaf vPower), [])
 
@@ -207,7 +205,7 @@ execAndResize :: Husky -> Visualizer -> Image
 execAndResize husky v = resized where
     w = (vis_width v)
     h = (vis_height v)
-    img = (visualize v) v husky (audio husky)
+    img = (visualize v) v husky
     resized = resize (w) (h) img
 
 
@@ -233,24 +231,6 @@ vecAbs vec = V.map (\v -> abs v) vec
 putStrLnFloat :: ByteString -> IO ()
 putStrLnFloat bytes = do
     System.IO.putStrLn $ show $ V.maximum $ vecAbs $ bytesToFloats bytes
-
--- todo make a record for this...
--- (charsEmpty, charsFilled, charsFade) maxBarLen barLen
-bar :: (Char, Char) -> String -> Int -> Int -> String
-bar chs chFa mbarlen n | n < 3  = (take n chFa) ++ (replicate (mbarlen-n) $ fst chs)
-      | n >= 3 && n <= mbarlen = filled ++ chFa ++ (replicate (maxBarLen-n) $ fst chs)
-      | n > mbarlen = replicate maxBarLen $ snd chs
-    where
-        chF = reverse $ take n $ reverse chFa
-        filled = replicate (n-3) $ snd chs
-
-
---
-a = ' '
-b = '█'
-c = "▓▒░"
-d = maxBarLen
-barApplied = bar (a, b) c d 
 
 strBar :: Int -> [String]
 strBar n = map (\c -> [c]) (barApplied n)
@@ -367,8 +347,9 @@ decimate binL vec = case l of
         front = (V.take binL vec)
         back = (V.drop binL vec)
 
-visFFT :: Visualizer -> Husky -> Audio -> Image
-visFFT v h a = img where
+visFFT :: Visualizer -> Husky -> Image
+visFFT v h = img where
+    a = audio h
     vec = weightedAverageSq waCoefs a 
     bins = (vis_width v) `div` barWidth
     wdh = bins * barWidth
@@ -379,38 +360,11 @@ visFFT v h a = img where
     images = map (\val -> valToImage val) lslice
     img = foldt (\a b -> a <|> b) (head images) (tail images)
 
-
-
--- takes in the squared fft values 
--- displayFFT :: Husky -> V.Vector Double -> Image 
--- displayFFT h vec = do
---     foldt (\a b -> a <|> b) (head images) (tail images)
---     where
---         bins = binsToTake
---         wdh = bins * barWidth
---         l = fromIntegral (V.length vec) :: Double
---         interested = V.take (floor (l * interestedFFTPart)) vec
---         slice = downsample bins interested
---         lslice = V.toList slice
---         images = map (\val -> valToImage val) lslice
-
-
 centerRect :: (Int, Int) -> Image -> Image
 centerRect (w, h) img = translate tx ty img
     where
         tx = fst $ (w - (binsToTake * barWidth)) `divMod` 2 
         ty = fst $ (h - maxBarLen) `divMod` 2
-
-
--- animate :: Vty -> ByteString -> IO ()
--- animate vty bs = do
---     region <- displayBounds $ outputIface vty
---     update vty $ picForImage (centerRect region (vertJoin fftoutput qline))
---     where
---         floats = bytesToFloats bs
---         fftoutput = volumefft3 floats
---         c = (binsToTake*barWidth)
---         qline = mline c '#'
 
 displayAll :: Husky -> IO ()
 displayAll h = do
@@ -418,35 +372,9 @@ displayAll h = do
     where
         vty = vtyInstance h
 
-
-
 handleIOEvent :: IO Event -> IO ()
 handleIOEvent x = do
     return () 
-
--- loop forever reading audio :)
--- capture :: MVar Event -> Vty -> Simple -> Float -> IO ()
--- capture ioBox vty s prevVol = do
---     -- (3) get terminal size 
---     -- (2) check for MVar 
---     -- ev :: Maybe (IO Event)
---     ev <- tryTakeMVar ioBox
---     case ev of 
---         Nothing -> do
---             -- handleIOEvent x
---             (readSample defaultBufferchunk s) >>= (animate vty)
---             capture ioBox vty s prevVol
---         Just x -> do
---             -- free and return
---             if shouldAbort x 
---                 then gracefulShutdown vty s
---                 else capture ioBox vty s prevVol
-
-gracefulShutdown :: Vty -> Simple -> IO ()
-gracefulShutdown vty s = do
-    shutdown vty
-    simpleFree s
-
 
 -- pattern match for Ctrl-C or q
 shouldAbort :: Event -> Bool
@@ -454,7 +382,6 @@ shouldAbort ev = case ev of
     (EvKey (KChar 'c') [MCtrl]) -> True
     (EvKey (KChar 'q') _) -> True
     _ -> False
-
 
 watchForIOEvents :: Husky -> IO ()
 watchForIOEvents h = do
