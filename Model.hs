@@ -194,6 +194,7 @@ parentsMaybe :: Maybe (Zipper b l) -> [b]
 parentsMaybe Nothing = []
 parentsMaybe (Just z) = parents z 
 
+-- refactor this into inherit
 traverseContextBF :: Zipper b l -> (Zipper b l -> Zipper b l) -> Zipper b l
 traverseContextBF (Leaf a, bs) f = f (Leaf a, bs)
 traverseContextBF (Branch x l r, bs) f = rec zApplied 
@@ -208,40 +209,3 @@ traverseContextBF (Branch x l r, bs) f = rec zApplied
             , bsr)
             where
                 mtree = (Branch y ll rr)
-
-
-------------
--- helper functions
-------------
-
--- renderhelp :: Husky -> Zipper Visualizer Window -> Maybe Image -> Image
--- renderhelp _ (Branch _ _ _, _) _ = error "renderhelp should only be called with leaves"
--- renderhelp husky (Leaf x, bs) accu =
---     if isEmpty bs then imgResized
---     else
---         if isVerti (orient parent)
---         then prepared <|> imgResized
---         else prepared <-> imgResized
---     where
---         z = (Leaf x, bs)
---         isEmpty [] = True
---         isEmpty x  = False
---         parent = head $ parents z 
---         isVerti Verti = True 
---         isVerti Horiz = False 
---         w = (vis_width x)
---         h = (vis_height x)
---         aud = audio husky
---         img = (visualize x) x husky aud
---         imgResized = resize w h img
---         prepareAccu Nothing = string defAttr ""
---         prepareAccu (Just accu) = accu 
---         prepared = prepareAccu accu
-
-
--- define:
-    -- OK zipper
-    -- OK goUp, goLeft, goRight, isLeaf
-    -- method to locate visualizer based on its name
-    -- render :: Zipper a b -> Image
-

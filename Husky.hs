@@ -78,7 +78,7 @@ maxBarLen = 15 -- height
 -- fft options
 historySize = 7
 waCoefs = [0.5, 0.15, 0.15, 0.05, 0.05, 0.05, 0.05]
-interestedFFTPart = 0.9
+interestedFFTPart = 0.7
 
 -- initial values
 defaultBufferchunk = 2048 -- 1024
@@ -129,7 +129,7 @@ vPower = Visualizer {
 }
 vFFT = Visualizer {
     vis_name = "fft",
-    visualize = visDummy,
+    visualize = visFFT,
     vis_width = -1,
     vis_height = -1
 }
@@ -190,20 +190,25 @@ fillVisDims (w,h) (Leaf y, bs) = (Leaf (update y nww nhh), bs)
         update x w h = x { vis_width = w, vis_height = h }
 
 render :: Husky -> Image
--- render husky = cata (renderhelp2 husky) calculatedT  
-render husky = string defAttr ""
-    where
-        aud = audio husky
-        w = window_width husky
-        h = window_height husky
-        layout = window_layout husky
-        calculatedT = fst (traverseContextBF defaultLayout $ fillVisDims (w,h))
+render husky = cata alg calculatedT where
+    aud = audio husky
+    w = window_width husky
+    h = window_height husky
+    layout = window_layout husky
+    calculatedT = fst (traverseContextBF defaultLayout $ fillVisDims (w,h))
 
--- renderhelp2 :: Husky -> BiTree Window Visualizer -> Image
--- renderhelp2 husky bt = alg bt
---     where
---         alg (LeafF v) = (visualize v) v husky (audio husky)
---         alg (BranchF w l r) = string defAttr ""
+    alg :: (BiTreeF Window Visualizer Image) -> Image
+    alg (LeafF v) = execAndResize husky v 
+    alg (BranchF w li ri)
+        | (orient w) == Verti = li <|> ri
+        | otherwise           = li <-> ri
+
+execAndResize :: Husky -> Visualizer -> Image
+execAndResize husky v = resized where
+    w = (vis_width v)
+    h = (vis_height v)
+    img = (visualize v) v husky (audio husky)
+    resized = resize (w) (h) img
 
 
 -- make calculations on data possible
@@ -362,18 +367,32 @@ decimate binL vec = case l of
         front = (V.take binL vec)
         back = (V.drop binL vec)
 
+visFFT :: Visualizer -> Husky -> Audio -> Image
+visFFT v h a = img where
+    vec = weightedAverageSq waCoefs a 
+    bins = (vis_width v) `div` barWidth
+    wdh = bins * barWidth
+    l = fromIntegral (V.length vec) :: Double
+    interested = V.take (floor (l * interestedFFTPart)) vec
+    slice = downsample bins interested
+    lslice = V.toList slice
+    images = map (\val -> valToImage val) lslice
+    img = foldt (\a b -> a <|> b) (head images) (tail images)
+
+
+
 -- takes in the squared fft values 
-displayFFT :: Husky -> V.Vector Double -> Image 
-displayFFT h vec = do
-    foldt (\a b -> a <|> b) (head images) (tail images)
-    where
-        bins = binsToTake
-        wdh = bins * barWidth
-        l = fromIntegral (V.length vec) :: Double
-        interested = V.take (floor (l * interestedFFTPart)) vec
-        slice = downsample bins interested
-        lslice = V.toList slice
-        images = map (\val -> valToImage val) lslice
+-- displayFFT :: Husky -> V.Vector Double -> Image 
+-- displayFFT h vec = do
+--     foldt (\a b -> a <|> b) (head images) (tail images)
+--     where
+--         bins = binsToTake
+--         wdh = bins * barWidth
+--         l = fromIntegral (V.length vec) :: Double
+--         interested = V.take (floor (l * interestedFFTPart)) vec
+--         slice = downsample bins interested
+--         lslice = V.toList slice
+--         images = map (\val -> valToImage val) lslice
 
 
 centerRect :: (Int, Int) -> Image -> Image
@@ -395,15 +414,8 @@ centerRect (w, h) img = translate tx ty img
 
 displayAll :: Husky -> IO ()
 displayAll h = do
-    -- update vty $ picForImage cropped 
     update vty $ picForImage (render h) 
     where
-        -- img = visBox h info
-        ffts = weightedAverageSq waCoefs (audio h)
-        img = displayFFT h ffts
-        wi = window_width h
-        he = window_height h
-        cropped = crop wi he img
         vty = vtyInstance h
 
 
