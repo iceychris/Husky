@@ -25,7 +25,10 @@ import Graphics.Vty
 import Util
 
 
+-- type aliases
 type ZWV = Zipper Window Visualizer
+type WinRes = (Window, Resolution)
+type VisRes = (Visualizer, Resolution)
 
 data Husky = Husky {
     title :: String,
@@ -59,64 +62,33 @@ data Audio = Audio {
     audioSample :: V.Vector Double,
     audioSampleFiltered :: V.Vector Double,
     audioVolume :: Int,
+    audioMemFFT :: V.Vector Double,
     audioFFT :: V.Vector (Complex Double),
     audioFFTSqHistory :: [V.Vector Double],
     audioFFTAdd :: V.Vector Double
 }
-
-weightedAverageSq :: [Double] -> Audio -> V.Vector Double
-weightedAverageSq coef aud =
-    if not lengthesMatch then error "lengths of coefficients and history do not match"
-    else if not coefAddUpToOne then error "coefficients do not add up to 1"
-    else ret 
-    where
-        hist = audioFFTSqHistory aud
-        lengthesMatch = length coef == length hist
-        coefAddUpToOne = roughlyEqual 0.01 (sum coef) 1.0
-
-        -- zip coef and history together
-        zipped = zip coef hist 
-
-        -- multiply coef with corresponding vector
-        multiplied = map (\x -> (V.map (\elem -> (fst x) * elem)) (snd x)) zipped
-        -- add these vectors up to one vector
-        accu = V.fromList (replicate (V.length $ head $ audioFFTSqHistory aud) 0.0) :: V.Vector Double
-        ret = foldt (\acc val -> addVecs acc val) accu multiplied 
-
-
--- fix this shitty stuff...
--- TODO implement addition here
--- TODO VERY INEFFICIENT
---  ~0.8sec for (V.length vec == 4_000_000) vecs
-addVecs :: V.Vector Double -> V.Vector Double -> V.Vector Double 
-addVecs a b = V.fromList $ zipWith (+) la lb
-    where
-        la = V.toList a
-        lb = V.toList b
-
 
 -- is this modeled adequately?
 -- try omitting Husky in the type list
 -- instead, maybe just pass the audio data?
 data Visualizer = Visualizer {
     vis_name :: String,
-    vis_width :: Int,
-    vis_height :: Int,
     visualize :: Visualizer -> Husky -> Image
 }
-instance Show Visualizer where show v = "Vis(" ++ show (vis_width v) ++ ", " ++ show (vis_height v) ++ ")"
+instance Show Visualizer where show v = "Vis(" <> vis_name v <> ")"
 
-
-data Orient =  Horiz | Verti deriving (Eq, Show)
+data Orient =  Horiz | Verti deriving (Eq, Show, Read)
+data Resolution = Resolution {
+    width :: Int,
+    height :: Int
+} deriving (Eq, Show, Read)
 
 -- inner nodes
 -- are Windows 
 data Window = Window {
     orient :: Orient,
-    percentage :: Double,
-    win_width :: Int,
-    win_height :: Int
-} deriving (Eq, Show)
+    percentage :: Double
+} deriving (Eq, Show, Read)
 
 -- leaves 
 -- are Visualizers
@@ -149,6 +121,26 @@ instance Recursive (BiTree a b) where
 instance Corecursive (BiTree a b) where
   embed (BranchF sp x xs) = Branch sp x xs
   embed (LeafF x) = Leaf x
+
+-- inherit in a root-to-leaf fashion
+--  f_branches -> f_leaves -> default_branch -> tree
+-- where f_branches args:
+--  (last result of f_branches -> branch value)
+-- and f_leaves args:
+--  (last result of f_branches -> leaf value)
+inheritT :: (c -> a -> c) -> (c -> b -> d) -> c -> BiTree a b -> BiTree c d
+inheritT f g i t = case t of
+    Leaf x -> Leaf (g i x)
+    Branch y l r -> Branch new (go l) (go r)
+        where
+            new = f i y
+            go = inheritT f g new
+
+-- annotate a tree with its height
+annoHeight :: a -> BiTree a b -> BiTree (a, Int) (b, Int)
+annoHeight defa = inheritT f f (defa, 0 :: Int) 
+    where
+        f cc bb = (bb, snd cc + 1)
 
 
 ------------
@@ -193,19 +185,3 @@ parents (t, (RightCrumb x t2):cs) = [x] ++ parents (t, cs)
 parentsMaybe :: Maybe (Zipper b l) -> [b]
 parentsMaybe Nothing = []
 parentsMaybe (Just z) = parents z 
-
--- refactor this into inherit
-traverseContextBF :: Zipper b l -> (Zipper b l -> Zipper b l) -> Zipper b l
-traverseContextBF (Leaf a, bs) f = f (Leaf a, bs)
-traverseContextBF (Branch x l r, bs) f = rec zApplied 
-    where 
-        z = (Branch x l r, bs)
-        zApplied = f z
-        rec (Leaf a, bsr) = error "rec (Leaf a,...) called. this should not happen. Audit your zip -> zip function"
-        rec (Branch y ll rr, bsr) =
-            (Branch y
-                (fst (traverseContextBF (goLeftUnsafe (mtree, bsr)) f))
-                (fst (traverseContextBF (goRightUnsafe (mtree, bsr)) f))
-            , bsr)
-            where
-                mtree = (Branch y ll rr)

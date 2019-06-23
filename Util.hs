@@ -32,11 +32,11 @@ bar chs chFa mbarlen n | n < 3  = (take n chFa) ++ (replicate (mbarlen-n) $ fst 
         chF = reverse $ take n $ reverse chFa
         filled = replicate (n-3) $ snd chs
 
-a = ' '
-b = '█'
-c = "▓▒░"
-d = 80
-barApplied = bar (a, b) c d 
+_a = ' '
+_b = '█'
+_c = "▓▒░"
+_d = 80
+barApplied = bar (_a, _b) _c _d 
 
 
 -- (tolerance, a, b)

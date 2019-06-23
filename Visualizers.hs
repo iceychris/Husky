@@ -10,18 +10,11 @@ import Util
 
 
 
--- i dont know about that one...
-info = Visualizer {
-    vis_name = "Info Visualizer",
-    vis_width = 40,
-    vis_height = 10
-}
-
 visEmpty :: Visualizer -> Husky -> Image
-visEmpty _ _ = string defAttr ""
+visEmpty _ _ = string defAttr "visEmpty"
 
 visDummy :: Visualizer -> Husky -> Image
-visDummy v _ = string defAttr ("| dummy | " ++ vis_name v ++ " | (" ++ (show $ vis_width v) ++ "," ++ (show $ vis_height v) ++ ")")
+visDummy v _ = string defAttr "visDummy" 
 
 visPower :: Visualizer -> Husky -> Image
 visPower v h = 
@@ -40,14 +33,16 @@ visVInfo v h = string defAttr $ vis_name v
 visHInfo :: Visualizer -> Husky -> Image
 visHInfo v h = string defAttr $ description h
 
+visRawValues :: Visualizer -> Husky -> Image
+visRawValues v h = string defAttr $ show $ V.take 3 $ audioMemFFT $ audio h
 
 -- draw a simple box in the 
 -- bounds specified by the visualizer
 visBox :: Visualizer -> Husky -> Image
 visBox v h = img 
     where
-        w = vis_width v
-        h = vis_height v
+        w = 20 
+        h = 20
         rowUpDown = string defAttr $ replicate w 'X'
         rowMid = string defAttr $ "X" ++ replicate (w - 2) ' ' ++ "X"
         allMid = vertCat $ replicate (h - 2) rowMid
@@ -60,9 +55,7 @@ visBox v h = img
 
 mkVis name f = Visualizer {
     vis_name = name,
-    visualize = f,
-    vis_width = -1,
-    vis_height = -1
+    visualize = f
 }
 
 vInfo = mkVis "info" visDummy
@@ -70,4 +63,5 @@ vHInfo = mkVis "husky info" visHInfo
 vVInfo = mkVis "visualizer info" visVInfo
 vPower = mkVis "power" visPower
 vBox = mkVis "Box" visBox
+vRaw = mkVis "Raw" visRawValues
 

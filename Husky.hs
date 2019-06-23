@@ -11,12 +11,15 @@ import System.Exit
 import Data.Maybe
 import Data.Int
 import Data.Complex
+import Data.Functor
+import Debug.Trace
 import GHC.Float
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, tryTakeMVar, putMVar, MVar)
 
 -- 3rd party
 import Data.ByteString.Internal as BS
+import Data.Time.Clock.POSIX
 import qualified Data.Vector.Storable as V
 import Sound.Pulse.Simple
 import Numeric.FFT.Vector.Plan
@@ -61,7 +64,6 @@ import Visualizers
 
 -- refactoring
     -- OK delete old commented out code
-    -- rewrite fillVisDims to use inherit / synthesize
     -- move real visualizers into Visualizers.hs
     -- create Config.hs and move all initial structures
 
@@ -76,18 +78,19 @@ gracefulShutdown vty s = do
 
 
 -- move these
-volMaxChars = 120.0 -- 0.8 -- scaling
-barWidth = 1
+volMaxChars = 300.0 -- 0.8 -- scaling
+barWidth = 2
 binsToTake = 100
 maxBarLen = 15 -- height
+lossPerFrame = 0.00001
 
 -- fft options
 historySize = 7
 waCoefs = [0.5, 0.15, 0.15, 0.05, 0.05, 0.05, 0.05]
-interestedFFTPart = 0.7
+interestedFFTPart = 1.0
 
 -- initial values
-defaultBufferchunk = 2048 -- 1024
+defaultBufferchunk = 4096 -- 1024
 fftInputs = (fst (defaultBufferchunk `divMod` 4))
 fftTransform = I.dftR2C
 fftPlan = plan fftTransform fftInputs
@@ -96,6 +99,7 @@ demoVec = V.fromList $ replicate defaultBufferchunk 0.0
 defaultAudio = Audio {
     audioVolume = 0,
     audioFFT    = V.fromList $ replicate defaultBufferchunk 0.0,
+    audioMemFFT = demoVec,
     audioSample = demoVec,
     audioFFTSqHistory = replicate historySize demoVec
 }
@@ -123,90 +127,81 @@ huskyDefault = Husky {
 
 vFFT = Visualizer {
     vis_name = "fft",
-    visualize = visFFT,
-    vis_width = -1,
-    vis_height = -1
+    visualize = visFFT
 }
 ver = Window {
     orient = Verti,
-    percentage = 0.5,
-    win_width = 0,
-    win_height = 0
+    percentage = 0.5
 }
 hor = Window {
     orient = Horiz,
-    percentage = 0.6,
-    win_width = 0,
-    win_height = 0
+    percentage = 0.9
 }
 defaultLayout = (Branch ver 
-            (Branch hor
-                (Branch hor (Leaf vHInfo) (Leaf vBox))
-                (Leaf vVInfo))
-            (Branch hor (Leaf vFFT) (Leaf vPower))
-        , [])
--- defaultLayout = (Leaf vInfo, [])
--- defaultLayout = (Branch ver (Leaf vInfo) (Leaf vPower), [])
+    (Branch hor
+        (Leaf vHInfo)
+        (Leaf vVInfo))
+    (Branch hor
+        (Leaf vFFT)
+        (Leaf vPower)) , [])
 
-
--- (w,h) -> ...
--- TODO make this function shorter...
-fillVisDims :: (Int, Int) -> ZWV -> ZWV 
-fillVisDims (w,h) (Branch x l r, []) = z
+fixDimsBranches :: (Window, Resolution) -> Window -> (Window, Resolution)
+fixDimsBranches (pw, pr) w = (w, rnew)
     where
-        update x w h = x { win_width = w, win_height = h }
-        z = (Branch (update x w h) l r, [])
-fillVisDims (w,h) (Leaf y, []) = z
-    where
-        update x w h = x { vis_width = w, vis_height = h }
-        z = (Leaf (update y w h), [])
-fillVisDims (w,h) (Branch x l r, bs) = (Branch (update x nww nhh) l r, bs) 
-    where 
-        parent = head $ parents (Branch x l r, bs)
+        parent = pw
         pcent = percentage parent
-        winw = win_width parent
-        winh = win_height parent
+        winw = width pr
+        winh = height pr
         nw Horiz = winw
         nw Verti = floor ((fromIntegral winw) * pcent) 
         nh Horiz = floor ((fromIntegral winh) * pcent)
         nh Verti = winh 
-        nww = nw $ orient parent
-        nhh = nh $ orient parent
-        update x w h = x { win_width = w, win_height = h }
-fillVisDims (w,h) (Leaf y, bs) = (Leaf (update y nww nhh), bs)
-    where 
-        parent = head $ parents (Leaf y, bs)
+        rnew = Resolution {
+            width = nw $ orient parent,
+            height = nh $ orient parent
+        }
+
+fixDimsLeaves :: (Window, Resolution) -> Visualizer -> (Visualizer, Resolution)
+fixDimsLeaves (pw, pr) v = (v, rnew)
+    where
+        parent = pw
         pcent = percentage parent
-        winw = win_width parent
-        winh = win_height parent
+        winw = width pr
+        winh = height pr
         nw Horiz = winw
         nw Verti = floor ((fromIntegral winw) * pcent) 
         nh Horiz = floor ((fromIntegral winh) * pcent)
         nh Verti = winh 
-        nww = nw $ orient parent
-        nhh = nh $ orient parent
-        update x w h = x { vis_width = w, vis_height = h }
+        rnew = Resolution {
+            width = nw $ orient parent,
+            height = nh $ orient parent
+        }
 
 render :: Husky -> Image
 render husky = cata alg calculatedT where
-    aud = audio husky
-    w = window_width husky
-    h = window_height husky
+    mwin = Window {
+        orient = Verti,
+        percentage = 1.0
+    }
+    res = Resolution {
+        width = window_width husky,
+        height = window_height husky
+    }
     layout = window_layout husky
-    calculatedT = fst (traverseContextBF defaultLayout $ fillVisDims (w,h))
+    calculatedT = inheritT fixDimsBranches fixDimsLeaves (mwin, res) $ fst layout
 
-    alg :: (BiTreeF Window Visualizer Image) -> Image
+    alg :: BiTreeF WinRes VisRes Image -> Image
     alg (LeafF v) = execAndResize husky v 
     alg (BranchF w li ri)
-        | (orient w) == Verti = li <|> ri
-        | otherwise           = li <-> ri
+        | orient (fst w) == Verti = li <|> ri
+        | otherwise               = li <-> ri
 
-execAndResize :: Husky -> Visualizer -> Image
-execAndResize husky v = resized where
-    w = (vis_width v)
-    h = (vis_height v)
+execAndResize :: Husky -> VisRes -> Image
+execAndResize husky (v, res) = resized where
+    w = width res
+    h = height res
     img = (visualize v) v husky
-    resized = resize (w) (h) img
+    resized = resize w h img
 
 
 -- make calculations on data possible
@@ -215,13 +210,13 @@ bytesToFloats = V.unsafeCast . aux . BS.toForeignPtr
   where aux (fp,offset,len) = V.unsafeFromForeignPtr fp offset len
 
 toDouble :: V.Vector Float -> V.Vector Double
-toDouble vec = V.map (\x -> float2Double x) vec
+toDouble = V.map float2Double
 
 readSample :: Int -> Simple -> IO ByteString 
 readSample ssize s = simpleReadRaw s ssize :: IO ByteString 
 
 vecAbs :: V.Vector Float -> V.Vector Float
-vecAbs vec = V.map (\v -> abs v) vec 
+vecAbs = V.map abs 
 
 
 -- helper function to print a [Float]
@@ -229,11 +224,11 @@ vecAbs vec = V.map (\v -> abs v) vec
 -- is this needed?
 -- or can I somehow compose show with putStrLn?
 putStrLnFloat :: ByteString -> IO ()
-putStrLnFloat bytes = do
-    System.IO.putStrLn $ show $ V.maximum $ vecAbs $ bytesToFloats bytes
+putStrLnFloat bytes = print $
+    V.maximum $ vecAbs $ bytesToFloats bytes
 
 strBar :: Int -> [String]
-strBar n = map (\c -> [c]) (barApplied n)
+strBar n = map (: []) (barApplied n)
 
 -- value, maximum
 vbar :: Float -> Float -> IO ()
@@ -248,28 +243,29 @@ vbar val maxi = putStrLn $ barApplied $ displayable val maxi
 -- ███
 -- ███
 imbar :: Int -> Int -> Image
-imbar n width = horizCat $ replicate width columns 
+imbar n wwidth = horizCat $ replicate wwidth columns 
     where
         onebar = reverse (strBar n)
-        columns = vertCat (map (\x -> string defAttr x) onebar)
+        columns = vertCat (map (string defAttr) onebar)
 
 
 -- generic function applying the fft?
 fft :: Plan Double (Complex Double) -> V.Vector Double -> V.Vector (Complex Double)
-fft plan floats = execute plan floats
+fft = execute
 
 sq :: V.Vector (Complex Double) -> V.Vector Double
-sq v = V.map magnitude v
+sq = V.map magnitude
 
 addy :: V.Vector (Complex Double) -> V.Vector Double
-addy v = V.map (\c -> realPart c + imagPart c) v
+addy = V.map (\c -> realPart c + imagPart c)
 
 
 
 -- TODO: fix audio
 -- TODO: fix addy vs sq
+-- TODO: fix volume
 fftAudio :: Husky -> ByteString -> Audio 
-fftAudio h bs = aud
+fftAudio h bs = aud2
     where
         sample = toDouble $ bytesToFloats bs
         fftsample = fft fftPlan sample
@@ -279,53 +275,47 @@ fftAudio h bs = aud
         prevHist = audioFFTSqHistory prevAud
         aud = Audio {
             audioSample = sample,
-            audioVolume = 0, -- todo fix this
+            audioVolume = 0,
             audioFFT = fftsample,
+            audioMemFFT = fftaddsample,
             audioFFTAdd = fftaddsample,
-            audioFFTSqHistory = [fftsqsample] ++ (init prevHist) 
+            audioFFTSqHistory = fftsqsample:(init prevHist) 
         }
+        aud2 = (applyMemory aud) { audioFFTSqHistory = (audioMemFFT aud):(init (audioFFTSqHistory aud))}
 
+applyMemory :: Audio -> Audio
+applyMemory aud = aud2
+    where
+        a = head $ audioFFTSqHistory aud
+        b = audioFFTSqHistory aud !! 1
+        memFFT = V.fromList $ fmap magic $ zip (V.toList a) (V.toList b)
+        magic p@(aa, bb) = if aa > bb then aa else bb - lossPerFrame
+        updateAudioFFT x = aud { audioMemFFT = x }
+        aud2 = updateAudioFFT memFFT 
 
+rescaleTodBForDisplay :: V.Vector Double -> V.Vector Double
+rescaleTodBForDisplay = V.map fun
+    where
+        fun x = if x <= 1.0 then x else 1.0 * ((log x) / (log 10)) ** 2
+
+positive :: V.Vector Double -> V.Vector Double
+positive = V.map (\x -> if x >= 0.0 then x else 0.0)
+
+maxNormalize :: V.Vector Double -> V.Vector Double
+maxNormalize v = if _max >= 0.01 then V.map (\x -> x / _max) v else v 
+    where
+        _max = V.maximum v
 
 volume :: ByteString -> IO ()
 volume bs = vbar fmax volMaxChars 
     where
         fmax = V.maximum $ vecAbs $ bytesToFloats bs
 
--- old
-maxfft = 40
-volumefft :: ByteString -> IO ()
-volumefft bs = vbar headFloats maxfft
-    where
-        doubles = (.) toDouble bytesToFloats bs
-        headFloats = double2Float $ V.head doubles
-
-
-volumefft2 :: Int -> IO ()
-volumefft2 val = do
-    t <- standardIOConfig >>= outputForConfig
-    reserveDisplay t
-    (w,h) <- displayBounds t
-    let row0 = replicate (fromEnum w) 'X' ++ "\n"
-        rowH = replicate (fromEnum w - 1) 'X'
-        rowN = "X" ++ replicate (fromEnum w - 2) ' ' ++ "X\n"
-        image = row0 ++ 
-            (concat $ replicate (fromEnum (fst (h `divMod` 2)) - 2) rowN) ++ 
-            (barApplied val) ++ "\n" ++
-            (concat $ replicate (fromEnum (fst (h `divMod` 2)) - 2) rowN) ++ 
-            rowH
-    putStr image
-    hFlush stdout
-    -- releaseDisplay t
-    -- releaseTerminal t
-    return ()
-
-
 valToImage :: Double -> Image
 valToImage val = imbar (displayable (double2Float val) volMaxChars) barWidth
 
 mline :: Int -> Char -> Image
-mline wdh c = string defAttr (replicate wdh c)
+mline wdh ch = string defAttr (replicate wdh ch)
 
 -- perform (fake) downsampling to
 -- reduce the length to nL
@@ -336,45 +326,38 @@ downsample nL vec = vecsSums
         calc = (vecLength `div` nL)
         oneBin = floor (fromIntegral calc)
         vecs = decimate oneBin vec 
-        vecsSums = V.fromList (map (\x -> V.maximum x) vecs)
+        vecsSums = V.fromList (map V.maximum vecs)
 
 decimate :: Int -> V.Vector Double -> [V.Vector Double]
 decimate binL vec = case l of
     0 -> []
-    _ -> [front] ++ (decimate binL back)
+    _ -> front:decimate binL back
     where 
         l = V.length vec
-        front = (V.take binL vec)
-        back = (V.drop binL vec)
+        front = V.take binL vec
+        back = V.drop binL vec
 
 visFFT :: Visualizer -> Husky -> Image
-visFFT v h = img where
-    a = audio h
-    vec = weightedAverageSq waCoefs a 
-    bins = (vis_width v) `div` barWidth
-    wdh = bins * barWidth
-    l = fromIntegral (V.length vec) :: Double
-    interested = V.take (floor (l * interestedFFTPart)) vec
-    slice = downsample bins interested
-    lslice = V.toList slice
-    images = map (\val -> valToImage val) lslice
-    img = foldt (\a b -> a <|> b) (head images) (tail images)
+visFFT _ h = {- trace ("vec is " <> show lslice) -} img
+    where
+    aud = audio h
+    vec = (maxNormalize . positive) $ audioMemFFT aud
+    -- vec = (maxNormalize . rescaleTodBForDisplay . maxNormalize . positive) $ audioMemFFT aud
+    -- vec = audioFFTAdd aud
+    lslice = V.toList vec
+    images = map valToImage lslice
+    img = foldt (<|>) (head images) (tail images)
 
 centerRect :: (Int, Int) -> Image -> Image
-centerRect (w, h) img = translate tx ty img
+centerRect (w, h) = translate tx ty
     where
         tx = fst $ (w - (binsToTake * barWidth)) `divMod` 2 
         ty = fst $ (h - maxBarLen) `divMod` 2
 
 displayAll :: Husky -> IO ()
-displayAll h = do
-    update vty $ picForImage (render h) 
+displayAll h = update vty $ picForImage (render h) 
     where
         vty = vtyInstance h
-
-handleIOEvent :: IO Event -> IO ()
-handleIOEvent x = do
-    return () 
 
 -- pattern match for Ctrl-C or q
 shouldAbort :: Event -> Bool
@@ -385,14 +368,15 @@ shouldAbort ev = case ev of
 
 watchForIOEvents :: Husky -> IO ()
 watchForIOEvents h = do
+
+    -- gather the next event
     ev <- nextEvent vty
-    -- putStrLn $ show ev
 
     -- send over to other thread
     putMVar qiobox $ ev 
 
     if shouldAbort ev
-        then exitWith ExitSuccess
+        then exitSuccess
         else watchForIOEvents h 
     where
         qiobox = ioBox h
@@ -404,7 +388,6 @@ spin h = do
     ev <- tryTakeMVar $ ioBox h
     case ev of 
         Nothing -> do
-            -- handleIOEvent x
 
             -- vty bounds
             region <- displayBounds $ outputIface vty
@@ -420,15 +403,15 @@ spin h = do
             displayAll hnew
 
             -- recurse
-            spin hnew 
+            spin hnew
 
-        Just x -> do
+        Just iev ->
             -- free and return
-            if shouldAbort x 
+            if shouldAbort iev 
                 then gracefulShutdown vty s 
 
-                -- recurse
-                else spin h 
+            -- recurse
+            else spin h
     where
         vty = (vtyInstance h)
         s = (recSimple h)
@@ -436,7 +419,7 @@ spin h = do
         updateVty x y = y { window_width = fst x, window_height = snd x}
 
 
-
+main :: IO ()
 main = do
 
     -- communication between UI and recorder thread
@@ -460,10 +443,7 @@ main = do
     let newHusky = (updateIoBox . updateVty . updateSimple) huskyDefault
 
     -- spin
-    forkIO $ spin $ newHusky
-
-    -- (1) start vty watcher thread
-    -- forkIO $ capture ioBox vty s 1.0
+    _ <- forkIO $ spin newHusky
 
     -- watch for IO Events
     watchForIOEvents newHusky 
